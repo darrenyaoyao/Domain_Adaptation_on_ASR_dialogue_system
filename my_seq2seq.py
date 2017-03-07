@@ -42,64 +42,10 @@ from tensorflow.python.ops import rnn
 from tensorflow.python.ops import variable_scope
 from tensorflow.python.ops import variable_scope as vs
 from tensorflow.python.util import nest
+from tensorflow.contrib.rnn.python.ops.core_rnn_cell_impl import _linear as linear
 import tensorflow as tf
 
 
-def linear(args, output_size, bias, bias_start=0.0, scope=None):
-  """Linear map: sum_i(args[i] * W[i]), where W[i] is a variable.
-
-  Args:
-    args: a 2D Tensor or a list of 2D, batch x n, Tensors.
-    output_size: int, second dimension of W[i].
-    bias: boolean, whether to add a bias term or not.
-    bias_start: starting value to initialize the bias; 0 by default.
-    scope: (optional) Variable scope to create parameters in.
-
-  Returns:
-    A 2D Tensor with shape [batch x output_size] equal to
-    sum_i(args[i] * W[i]), where W[i]s are newly created matrices.
-
-  Raises:
-    ValueError: if some of the arguments has unspecified or wrong shape.
-  """
-  if args is None or (nest.is_sequence(args) and not args):
-    raise ValueError("`args` must be specified")
-  if not nest.is_sequence(args):
-    args = [args]
-
-  # Calculate the total size of arguments on dimension 1.
-  total_arg_size = 0
-  shapes = [a.get_shape() for a in args]
-  for shape in shapes:
-    if shape.ndims != 2:
-      raise ValueError("linear is expecting 2D arguments: %s" % shapes)
-    if shape[1].value is None:
-      raise ValueError("linear expects shape[1] to be provided for shape %s, "
-                       "but saw %s" % (shape, shape[1]))
-    else:
-      total_arg_size += shape[1].value
-
-  dtype = [a.dtype for a in args][0]
-
-  # Now the computation.
-  scope = vs.get_variable_scope()
-  with vs.variable_scope(scope) as outer_scope:
-    weights = vs.get_variable(
-        "weights", [total_arg_size, output_size], dtype=dtype)
-    if len(args) == 1:
-      res = math_ops.matmul(args[0], weights)
-    else:
-      res = math_ops.matmul(array_ops.concat(args, 1), weights)
-    if not bias:
-      return res
-    with vs.variable_scope(outer_scope) as inner_scope:
-      inner_scope.set_partitioner(None)
-      biases = vs.get_variable(
-          "biases", [output_size],
-          dtype=dtype,
-          initializer=init_ops.constant_initializer(bias_start, dtype=dtype))
-  return nn_ops.bias_add(res, biases)
-  
 def _extract_argmax_and_embed(embedding, output_projection=None,
                               update_embedding=True):
   """Get a loop_function that extracts the previous symbol and embeds it.
@@ -262,7 +208,7 @@ def beam_rnn_decoder(decoder_inputs, initial_state, cell, loop_function=None,
         variable_scope.get_variable_scope().reuse_variables()
 
       input_size = inp.get_shape().with_rank(2)[1]
-      print input_size
+      print(input_size)
       x = inp
       output, state = cell(x, state)
 
@@ -647,6 +593,7 @@ def beam_attention_decoder(decoder_inputs, initial_state, attention_states, cell
       v.append(variable_scope.get_variable("AttnV_%d" % a,
                                            [attention_vec_size]))
 
+    print("Initial_state")
 
     state = initial_state
     def attention(query):
@@ -780,8 +727,8 @@ def embedding_attention_decoder(decoder_inputs, initial_state, attention_states,
     with ops.device("/cpu:0"):
       embedding = variable_scope.get_variable("embedding",
                                               [num_symbols, embedding_size])
-    print "Check number of symbols"
-    print num_symbols
+    print("Check number of symbols")
+    print(num_symbols)
     if beam_search:
         loop_function = _extract_beam_search(
         embedding, beam_size,num_symbols, embedding_size, output_projection,
@@ -859,14 +806,14 @@ def embedding_attention_seq2seq(encoder_inputs, decoder_inputs, cell,
         embedding_size=embedding_size)
     encoder_outputs, encoder_state = tf.contrib.rnn.static_rnn(
         encoder_cell, encoder_inputs, dtype=dtype)
-    print "Symbols"
-    print num_encoder_symbols
-    print num_decoder_symbols
+    print("Symbols")
+    print(num_encoder_symbols)
+    print(num_decoder_symbols)
     # First calculate a concatenation of encoder outputs to put attention on.
     top_states = [array_ops.reshape(e, [-1, 1, cell.output_size])
                   for e in encoder_outputs]
     attention_states = array_ops.concat(top_states, 1)
-    print attention_states
+    print(attention_states)
     # Decoder.
     output_size = None
     if output_projection is None:
@@ -1087,6 +1034,6 @@ def decode_model_with_buckets(encoder_inputs, decoder_inputs, targets, weights,
         outputs.append(bucket_outputs)
         beam_paths.append(beam_path)
         beam_symbols.append(beam_symbol)
-  print "End**********"
+  print("End**********")
 
   return outputs, beam_paths, beam_symbols

@@ -51,7 +51,7 @@ tf.app.flags.DEFINE_integer("beam_size", 100,
                             "How many training steps to do per checkpoint.")
 tf.app.flags.DEFINE_boolean("beam_search", False,
                             "Set to True for beam_search.")
-tf.app.flags.DEFINE_boolean("decode", False,
+tf.app.flags.DEFINE_boolean("decode", True,
                             "Set to True for interactive decoding.")
 tf.app.flags.DEFINE_boolean("attention", False,
                             "Set to True for interactive decoding.")
@@ -65,7 +65,11 @@ FLAGS = tf.app.flags.FLAGS
 _buckets = [(5, 10), (10, 15), (20, 25), (40, 50)]
 
 
-
+def calculate_response_pro(logits, outputs):
+    total_pro = 1
+    for i, pro in enumerate(logits):
+        total_pro = total_pro * pro[0][outputs[i]]
+    return total_pro
 
 def read_chat_data(data_path,vocabulary_path, max_size=None):
     counter = 0
@@ -104,26 +108,6 @@ def create_model(session, forward_only, beam_search, beam_size = 10, attention =
       forward_only=forward_only, beam_search=beam_search, beam_size=beam_size, attention=attention)
   print FLAGS.train_dir
   ckpt = tf.train.get_checkpoint_state(FLAGS.train_dir)
-
-  # ckpt.model_checkpoint_path ="./big_models/chat_bot.ckpt-183600"
-  # print ckpt.model_checkpoint_path
-  if ckpt and tf.gfile.Exists(ckpt.model_checkpoint_path):
-    print("Reading model parameters from %s" % ckpt.model_checkpoint_path)
-    model.saver.restore(session, ckpt.model_checkpoint_path)
-  else:
-    print("Created model with fresh parameters.")
-    session.run(tf.global_variables_initializer())
-  return model
-
-def create_models(path, en_vocab_size, session, forward_only, beam_search, beam_size = 10, attention = True):
-  """Create translation model and initialize or load parameters in session."""
-  model = Seq2SeqModel(
-      en_vocab_size, en_vocab_size, _buckets,
-      FLAGS.size, FLAGS.num_layers, FLAGS.max_gradient_norm, FLAGS.batch_size,
-      FLAGS.learning_rate, FLAGS.learning_rate_decay_factor,
-      forward_only=forward_only, beam_search=beam_search, beam_size=beam_size, attention=attention)
-  print FLAGS.train_dir
-  ckpt = tf.train.get_checkpoint_state(path)
 
   # ckpt.model_checkpoint_path ="./big_models/chat_bot.ckpt-183600"
   # print ckpt.model_checkpoint_path
@@ -301,16 +285,18 @@ def decode():
               # This is a greedy decoder - outputs are just argmaxes of output_logits.
 
               outputs = [int(np.argmax(logit, axis=1)) for logit in output_logits]
+              logits = output_logits
               # If there is an EOS symbol in outputs, cut them at that point.
               if EOS_ID in outputs:
                   # print outputs
                   outputs = outputs[:outputs.index(EOS_ID)]
+                  logits = logits[:output.index(EOS_ID)]
 
               print(" ".join([tf.compat.as_str(rev_vocab[output]) for output in outputs]))
+              print(calculate_response_pro(logits, outputs))
               print("> ", "")
               sys.stdout.flush()
               sentence = sys.stdin.readline()
-
 
 
 def main(_):

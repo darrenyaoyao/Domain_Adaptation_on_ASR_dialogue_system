@@ -298,6 +298,53 @@ def decode():
               sys.stdout.flush()
               sentence = sys.stdin.readline()
 
+def eval():
+  with tf.Session() as sess:
+    # Create model and load parameters.
+    beam_size = FLAGS.beam_size
+    beam_search = FLAGS.beam_search
+    attention = FLAGS.attention
+    model = create_model(sess, True, beam_search=beam_search, beam_size=beam_size, attention=attention)
+    model.batch_size = 1  # We decode one sentence at a time.
+
+    # Load vocabularies.
+    vocab_path = FLAGS.vocab_path
+    vocab, rev_vocab = initialize_vocabulary(vocab_path)
+
+    # Read testing data.
+    '''
+    Todo: read_testing_data function
+          test_set is a list of size len(_bucket)  _buckets = [(5, 10), (10, 15), (20, 25), (40, 50)]
+          test_set = [[5], [10], [20], [40]] (just illustration)
+          test_set[i] is a list of testing data correspond to the target sentence length
+          ex: test_set[0] is for the data whose target sentence length is 5
+          Each element, test_data, in test_set[i] is a tuple which test_data[0] is target,
+          test_data[1] is a list of all answer options.
+    '''    
+    test_set = read_testing_data(test_path,vocab_path, FLAGS.max_train_data_size)
+
+    # This is the testing loop.
+    recall_at_k = streaming_recall_at_k([1,2,5])
+    for i in range(len(_buckets)):
+      bucket_pro = []
+      bucket_id = i
+      test_target = [ (d[0], []) for d in test_set[i] ]
+      # Todo: model.get_test_batch function: get all data in one test_set bucket
+      encoder_inputs, decoder_inputs, target_weights = model.get_test_batch(
+        {bucket_id: test_target}, bucket_id)
+
+      _, _, output_logits = model.step(sess, encoder_inputs, decoder_inputs,
+                                               target_weights, bucket_id, True, beam_search)
+
+      for j, data in enumerate(test_set[i])):
+        pro = []
+        for target in data[1]:
+          pro.append(calculate_responese_pro(output_logits[j], target))
+        bucket_pro.append(pro)
+
+      labels = [ 0 for i in range(bucket_pro)]
+      results = recall_at_k.evaluate(bucket_pro, labels)
+      print(results[0], resulte[1])
 
 def main(_):
   if FLAGS.decode:

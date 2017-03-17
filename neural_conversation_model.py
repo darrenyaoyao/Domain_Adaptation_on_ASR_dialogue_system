@@ -24,9 +24,11 @@ import time
 import numpy as np
 from six.moves import xrange  # pylint: disable=redefined-builtin
 import tensorflow as tf
+import pandas as pd
 
 from  data_utils import *
 from  seq2seq_model import *
+from  recall_at_k_impl import streaming_recall_at_k
 import codecs
 
 tf.app.flags.DEFINE_float("learning_rate", 0.5, "Learning rate.")
@@ -42,6 +44,7 @@ tf.app.flags.DEFINE_integer("en_vocab_size", 40000, "English vocabulary size.")
 tf.app.flags.DEFINE_string("train_dir", "./tmp/", "Training directory.")
 tf.app.flags.DEFINE_string("vocab_path", "./tmp/", "Data directory")
 tf.app.flags.DEFINE_string("data_path", "./tmp/", "Training directory.")
+tf.app.flags.DEFINE_string("test_path", "./tmp/", "Testing directory.")
 tf.app.flags.DEFINE_string("dev_data", "./tmp/", "Data directory")
 tf.app.flags.DEFINE_integer("max_train_data_size", 0,
                             "Limit on the size of training data (0: no limit).")
@@ -63,19 +66,37 @@ FLAGS = tf.app.flags.FLAGS
 # We use a number of buckets and pad to the closest one for efficiency.
 # See seq2seq_model.Seq2SeqModel for details of how they work.
 _buckets = [(5, 10), (10, 15), (20, 25), (40, 50)]
-
+#_buckets = [(30, 20), (50, 30), (100, 50), (120, 80), (160, 160)]
+max_seqlen = 40
 
 def calculate_response_pro(logits, outputs):
     total_pro = 1
     for i, pro in enumerate(logits):
-        total_pro = total_pro * pro[0][outputs[i]]
+        total_pro = total_pro * pro[outputs[i]]
     return total_pro
+
+def read_test_data(data_path, vocabulary_path):
+    vocab, _ = initialize_vocabulary(vocabulary_path)
+    print(len(vocab))
+
+    data_set = [[] for _ in _buckets]
+    data = pd.read_csv(data_path).as_matrix()
+    for example in data:
+        source = example[0]
+        target_list = example[1:]
+        source_ids = [int(x) for x in sentence_to_token_ids(source,vocab)][:max_seqlen]
+        target_ids_list = [[int(x) for x in sentence_to_token_ids(target,vocab)][:max_seqlen-1]
+                            for target in target_list]
+        for target_ids in target_ids_list:
+            target_ids.append(EOS_ID)
+        data_set[-1].append([source_ids, target_ids_list])
+    return data_set
 
 def read_chat_data(data_path,vocabulary_path, max_size=None):
     counter = 0
     vocab, _ = initialize_vocabulary(vocabulary_path)
-    print len(vocab)
-    print max_size
+    print(len(vocab))
+    print(max_size)
     data_set = [[] for _ in _buckets]
     with codecs.open(data_path, "rb") as fi:
         for line in fi.readlines():
@@ -90,11 +111,11 @@ def read_chat_data(data_path,vocabulary_path, max_size=None):
             if len(entities) == 2:
                 source = entities[0]
                 target = entities[1]
-                source_ids = [int(x) for x in sentence_to_token_ids(source,vocab)]
-                target_ids = [int(x) for x in sentence_to_token_ids(target,vocab)]
+                source_ids = [int(x) for x in sentence_to_token_ids(source,vocab)][:max_seqlen]
+                target_ids = [int(x) for x in sentence_to_token_ids(target,vocab)][:max_seqlen-1]
                 target_ids.append(EOS_ID)
                 for bucket_id, (source_size, target_size) in enumerate(_buckets):
-                  if len(source_ids) < source_size and len(target_ids) < target_size:
+                  if len(source_ids) <= source_size and len(target_ids) <= target_size:
                     data_set[bucket_id].append([source_ids, target_ids])
                     break
     return data_set
@@ -106,7 +127,7 @@ def create_model(session, forward_only, beam_search, beam_size = 10, attention =
       FLAGS.size, FLAGS.num_layers, FLAGS.max_gradient_norm, FLAGS.batch_size,
       FLAGS.learning_rate, FLAGS.learning_rate_decay_factor,
       forward_only=forward_only, beam_search=beam_search, beam_size=beam_size, attention=attention)
-  print FLAGS.train_dir
+  print(FLAGS.train_dir)
   ckpt = tf.train.get_checkpoint_state(FLAGS.train_dir)
 
   # ckpt.model_checkpoint_path ="./big_models/chat_bot.ckpt-183600"
@@ -179,7 +200,7 @@ def train():
       # Once in a while, we save checkpoint, print statistics, and run evals.
       if current_step % FLAGS.steps_per_checkpoint == 0:
         # Print statistics for the previous epoch.
-        print "Running epochs"
+        print("Running epochs")
         perplexity = math.exp(loss) if loss < 300 else float('inf')
         print ("global step %d learning rate %.4f step-time %.2f perplexity "
                 "%.2f" % (model.global_step.eval(), model.learning_rate.eval(),
@@ -204,6 +225,58 @@ def train():
             eval_ppx = math.exp(eval_loss) if eval_loss < 300 else float('inf')
             print("  eval: bucket %d perplexity %.2f" % (bucket_id, eval_ppx))
         sys.stdout.flush()
+
+def eval():
+    with tf.Session() as sess:
+        # Create model and load parameters.
+        beam_size = FLAGS.beam_size
+        beam_search = FLAGS.beam_search
+        attention = FLAGS.attention
+        model = create_model(sess, True, beam_search=beam_search, beam_size=beam_size, attention=attention)
+
+        # Load vocabularies.
+        vocab_path = FLAGS.vocab_path
+        vocab, rev_vocab = initialize_vocabulary(vocab_path)
+
+        # Read testing data.
+        '''
+        Todo: read_testing_data function
+            test_set is a list of size len(_bucket)  _buckets = [(5, 10), (10, 15), (20, 25), (40, 50)]
+            test_set = [[5], [10], [20], [40]] (just illustration)
+            test_set[i] is a list of testing data correspond to the target sentence length
+            ex: test_set[0] is for the data whose target sentence length is 5
+            Each element, test_data, in test_set[i] is a tuple which test_data[0] is target,
+            test_data[1] is a list of all answer options.
+        '''
+        test_path = FLAGS.test_path
+        test_set = read_test_data(test_path, vocab_path)
+
+        # This is the testing loop.
+        recall_at_k = streaming_recall_at_k([1,2,5])
+        for bucket_id in range(len(_buckets)):
+            if len(test_set[bucket_id]) == 0:
+                print("  eval: empty bucket %d" % (bucket_id))
+                continue
+            bucket_pro = []
+            results = [0, 0]
+            model.batch_size = len(test_set[bucket_id]) * 10
+            # Todo: model.get_test_batch function: get all data in one test_set bucket
+            encoder_inputs, decoder_inputs, target_weights = model.get_test_batch(
+                test_set, bucket_id)
+
+            _, _, output_logits = model.step(sess, encoder_inputs, decoder_inputs,
+                                             target_weights, bucket_id, True, beam_search)
+
+            output_logits = np.transpose(output_logits, (1, 0, 2))
+            for j, data in enumerate(test_set[bucket_id]):
+                pro = []
+                for target in data[1]:
+                    pro.append(calculate_responese_pro(output_logits[j], target))
+                bucket_pro.append(pro)
+
+            labels = [0 for i in range(bucket_pro)]
+            results = recall_at_k.evaluate(bucket_pro, labels)
+            print(results[0], results[1])
 
 def decode():
   with tf.Session() as sess:
@@ -248,7 +321,7 @@ def decode():
                 paths[kk].append(symbol[i][curr[kk]])
                 curr[kk] = path[i][curr[kk]]
           recos = set()
-          print "Replies --------------------------------------->"
+          print("Replies --------------------------------------->")
           for kk in range(beam_size):
               foutputs = [int(logit)  for logit in paths[kk][::-1]]
 
@@ -259,7 +332,7 @@ def decode():
               rec = " ".join([tf.compat.as_str(rev_vocab[output]) for output in foutputs])
               if rec not in recos:
                       recos.add(rec)
-                      print rec
+                      print(rec)
 
           print("> ", "")
           sys.stdout.flush()
@@ -298,57 +371,9 @@ def decode():
               sys.stdout.flush()
               sentence = sys.stdin.readline()
 
-def eval():
-  with tf.Session() as sess:
-    # Create model and load parameters.
-    beam_size = FLAGS.beam_size
-    beam_search = FLAGS.beam_search
-    attention = FLAGS.attention
-    model = create_model(sess, True, beam_search=beam_search, beam_size=beam_size, attention=attention)
-    model.batch_size = 1  # We decode one sentence at a time.
-
-    # Load vocabularies.
-    vocab_path = FLAGS.vocab_path
-    vocab, rev_vocab = initialize_vocabulary(vocab_path)
-
-    # Read testing data.
-    '''
-    Todo: read_testing_data function
-          test_set is a list of size len(_bucket)  _buckets = [(5, 10), (10, 15), (20, 25), (40, 50)]
-          test_set = [[5], [10], [20], [40]] (just illustration)
-          test_set[i] is a list of testing data correspond to the target sentence length
-          ex: test_set[0] is for the data whose target sentence length is 5
-          Each element, test_data, in test_set[i] is a tuple which test_data[0] is target,
-          test_data[1] is a list of all answer options.
-    '''    
-    test_set = read_testing_data(test_path,vocab_path, FLAGS.max_train_data_size)
-
-    # This is the testing loop.
-    recall_at_k = streaming_recall_at_k([1,2,5])
-    for i in range(len(_buckets)):
-      bucket_pro = []
-      bucket_id = i
-      test_target = [ (d[0], []) for d in test_set[i] ]
-      # Todo: model.get_test_batch function: get all data in one test_set bucket
-      encoder_inputs, decoder_inputs, target_weights = model.get_test_batch(
-        {bucket_id: test_target}, bucket_id)
-
-      _, _, output_logits = model.step(sess, encoder_inputs, decoder_inputs,
-                                               target_weights, bucket_id, True, beam_search)
-
-      for j, data in enumerate(test_set[i])):
-        pro = []
-        for target in data[1]:
-          pro.append(calculate_responese_pro(output_logits[j], target))
-        bucket_pro.append(pro)
-
-      labels = [ 0 for i in range(bucket_pro)]
-      results = recall_at_k.evaluate(bucket_pro, labels)
-      print(results[0], resulte[1])
-
 def main(_):
   if FLAGS.decode:
-    decode()
+    eval()
   else:
     train()
 

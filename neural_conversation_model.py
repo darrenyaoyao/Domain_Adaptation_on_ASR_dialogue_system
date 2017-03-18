@@ -73,6 +73,8 @@ def calculate_response_pro(logits, outputs):
     total_pro = 1
     for i, pro in enumerate(logits):
         total_pro = total_pro * pro[outputs[i]]
+        if i > len(outputs):
+            break
     return total_pro
 
 def read_test_data(data_path, vocabulary_path):
@@ -233,6 +235,7 @@ def eval():
         beam_search = FLAGS.beam_search
         attention = FLAGS.attention
         model = create_model(sess, True, beam_search=beam_search, beam_size=beam_size, attention=attention)
+        model.batch_size *= 10
 
         # Load vocabularies.
         vocab_path = FLAGS.vocab_path
@@ -259,24 +262,24 @@ def eval():
                 continue
             bucket_pro = []
             results = [0, 0]
-            model.batch_size = len(test_set[bucket_id]) * 10
             # Todo: model.get_test_batch function: get all data in one test_set bucket
-            encoder_inputs, decoder_inputs, target_weights = model.get_test_batch(
-                test_set, bucket_id)
+            while results[1] < len(test_set[bucket_id]):
+                encoder_inputs, decoder_inputs, target_weights = model.get_test_batch(
+                    test_set, bucket_id, results[1])
 
-            _, _, output_logits = model.step(sess, encoder_inputs, decoder_inputs,
-                                             target_weights, bucket_id, True, beam_search)
+                _, _, output_logits = model.step(sess, encoder_inputs, decoder_inputs,
+                                                 target_weights, bucket_id, True, beam_search)
 
-            output_logits = np.transpose(output_logits, (1, 0, 2))
-            for j, data in enumerate(test_set[bucket_id]):
-                pro = []
-                for target in data[1]:
-                    pro.append(calculate_responese_pro(output_logits[j], target))
-                bucket_pro.append(pro)
+                output_logits = np.transpose(output_logits, (1, 0, 2))
+                for j, data in enumerate(test_set[bucket_id]):
+                    pro = []
+                    for target in data[1]:
+                        pro.append(calculate_responese_pro(output_logits[j], target))
+                    bucket_pro.append(pro)
 
-            labels = [0 for i in range(bucket_pro)]
-            results = recall_at_k.evaluate(bucket_pro, labels)
-            print(results[0], results[1])
+                labels = [0 for i in range(bucket_pro)]
+                results = recall_at_k.evaluate(bucket_pro, labels)
+                print(results[0], results[1])
 
 def decode():
   with tf.Session() as sess:

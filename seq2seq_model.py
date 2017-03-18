@@ -302,14 +302,15 @@ class Seq2SeqModel(object):
       batch_weights.append(batch_weight)
     return batch_encoder_inputs, batch_decoder_inputs, batch_weights
 
-  def get_test_batch(self, data, bucket_id):
+  def get_test_batch(self, data, bucket_id, cur_idx):
     encoder_size, decoder_size = self.buckets[bucket_id]
     encoder_inputs, decoder_inputs = [], []
 
     # Get a batch of encoder and decoder inputs from data,
     # pad them if needed, reverse encoder inputs and add GO to decoder.
     batch_size = self.batch_size / 10
-    for i in range(batch_size):
+    end = min(cur_idx + batch_size, len(data[bucket_id]))
+    for i in range(cur_idx, end):
       encoder_input = data[bucket_id][i][0]
       encoder_pad = [PAD_ID] * (encoder_size - len(encoder_input))
       for j in range(10):

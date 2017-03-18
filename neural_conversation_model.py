@@ -54,7 +54,7 @@ tf.app.flags.DEFINE_integer("beam_size", 100,
                             "How many training steps to do per checkpoint.")
 tf.app.flags.DEFINE_boolean("beam_search", False,
                             "Set to True for beam_search.")
-tf.app.flags.DEFINE_boolean("decode", True,
+tf.app.flags.DEFINE_boolean("decode", False,
                             "Set to True for interactive decoding.")
 tf.app.flags.DEFINE_boolean("attention", False,
                             "Set to True for interactive decoding.")
@@ -72,9 +72,9 @@ max_seqlen = 40
 def calculate_response_pro(logits, outputs):
     total_pro = 1
     for i, pro in enumerate(logits):
-        total_pro = total_pro * pro[outputs[i]]
         if i > len(outputs):
             break
+        total_pro = total_pro * pro[outputs[i]]
     return total_pro
 
 def read_test_data(data_path, vocabulary_path):

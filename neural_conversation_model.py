@@ -264,17 +264,17 @@ def eval():
             results = [0, 0]
             # Todo: model.get_test_batch function: get all data in one test_set bucket
             while results[1] < len(test_set[bucket_id]):
-                encoder_inputs, decoder_inputs, target_weights = model.get_test_batch(
+                encoder_inputs, decoder_inputs, target_weights, end_idx = model.get_test_batch(
                     test_set, bucket_id, results[1])
 
                 _, _, output_logits = model.step(sess, encoder_inputs, decoder_inputs,
                                                  target_weights, bucket_id, True, beam_search)
 
                 output_logits = np.transpose(output_logits, (1, 0, 2))
-                for j, data in enumerate(test_set[bucket_id]):
+                for i, data in enumerate(test_set[bucket_id][results[1]:end_idx]):
                     pro = []
-                    for target in data[1]:
-                        pro.append(calculate_responese_pro(output_logits[j], target))
+                    for j, target in enumerate(data[1]):
+                        pro.append(calculate_responese_pro(output_logits[i*10+j], target))
                     bucket_pro.append(pro)
 
                 labels = [0 for i in range(bucket_pro)]

@@ -309,8 +309,8 @@ class Seq2SeqModel(object):
     # Get a batch of encoder and decoder inputs from data,
     # pad them if needed, reverse encoder inputs and add GO to decoder.
     batch_size = self.batch_size / 10
-    end = min(cur_idx + batch_size, len(data[bucket_id]))
-    for i in range(cur_idx, end):
+    end_idx = min(cur_idx + batch_size, len(data[bucket_id]))
+    for i in range(cur_idx, end_idx):
       encoder_input = data[bucket_id][i][0]
       encoder_pad = [PAD_ID] * (encoder_size - len(encoder_input))
       for j in range(10):
@@ -348,4 +348,4 @@ class Seq2SeqModel(object):
         if length_idx == decoder_size - 1 or target == PAD_ID:
           batch_weight[batch_idx] = 0.0
       batch_weights.append(batch_weight)
-    return batch_encoder_inputs, batch_decoder_inputs, batch_weights
+    return batch_encoder_inputs, batch_decoder_inputs, batch_weights, end_idx

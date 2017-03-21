@@ -310,6 +310,7 @@ class Seq2SeqModel(object):
     # pad them if needed, reverse encoder inputs and add GO to decoder.
     batch_size = self.batch_size / 10
     end_idx = min(cur_idx + batch_size, len(data[bucket_id]))
+    print(cur_idx)
     for i in range(cur_idx, end_idx):
       encoder_input = data[bucket_id][i][0]
       encoder_pad = [PAD_ID] * (encoder_size - len(encoder_input))

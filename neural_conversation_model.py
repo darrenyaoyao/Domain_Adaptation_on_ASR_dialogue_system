@@ -72,7 +72,7 @@ max_seqlen = 40
 def calculate_response_pro(logits, outputs):
     total_pro = 1
     for i, pro in enumerate(logits):
-        if i > len(outputs):
+        if i >= len(outputs):
             break
         total_pro = total_pro * pro[outputs[i]]
     return total_pro
@@ -231,6 +231,7 @@ def train():
 def eval():
     with tf.Session() as sess:
         # Create model and load parameters.
+        recall_at_k = streaming_recall_at_k([1,2,5])
         beam_size = FLAGS.beam_size
         beam_search = FLAGS.beam_search
         attention = FLAGS.attention
@@ -255,7 +256,6 @@ def eval():
         test_set = read_test_data(test_path, vocab_path)
 
         # This is the testing loop.
-        recall_at_k = streaming_recall_at_k([1,2,5])
         for bucket_id in range(len(_buckets)):
             if len(test_set[bucket_id]) == 0:
                 print("  eval: empty bucket %d" % (bucket_id))
@@ -265,20 +265,20 @@ def eval():
             # Todo: model.get_test_batch function: get all data in one test_set bucket
             while results[1] < len(test_set[bucket_id]):
                 encoder_inputs, decoder_inputs, target_weights, end_idx = model.get_test_batch(
-                    test_set, bucket_id, results[1])
+                    test_set, bucket_id, int(results[1]))
 
                 _, _, output_logits = model.step(sess, encoder_inputs, decoder_inputs,
                                                  target_weights, bucket_id, True, beam_search)
 
                 output_logits = np.transpose(output_logits, (1, 0, 2))
-                for i, data in enumerate(test_set[bucket_id][results[1]:end_idx]):
+                for i, data in enumerate(test_set[bucket_id][int(results[1]):end_idx]):
                     pro = []
                     for j, target in enumerate(data[1]):
-                        pro.append(calculate_responese_pro(output_logits[i*10+j], target))
+                        pro.append(calculate_response_pro(output_logits[i*10+j], target))
                     bucket_pro.append(pro)
 
-                labels = [0 for i in range(bucket_pro)]
-                results = recall_at_k.evaluate(bucket_pro, labels)
+                labels = [0 for i in range(len(bucket_pro))]
+                results = recall_at_k.evaluate(sess, bucket_pro, labels)
                 print(results[0], results[1])
 
 def decode():

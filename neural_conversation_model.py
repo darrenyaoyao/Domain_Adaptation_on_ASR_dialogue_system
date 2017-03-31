@@ -65,8 +65,8 @@ FLAGS = tf.app.flags.FLAGS
 
 # We use a number of buckets and pad to the closest one for efficiency.
 # See seq2seq_model.Seq2SeqModel for details of how they work.
-_buckets = [(5, 10), (10, 15), (20, 25), (40, 50)]
-#_buckets = [(30, 20), (50, 30), (100, 50), (120, 80), (160, 160)]
+# _buckets = [(5, 10), (10, 15), (20, 25), (40, 50)]
+_buckets = [(30, 20), (50, 30), (100, 50), (120, 80), (160, 160)]
 max_seqlen = 40
 
 def calculate_response_pro(logits, outputs):
@@ -132,11 +132,12 @@ def create_model(session, forward_only, beam_search, beam_size = 10, attention =
   print(FLAGS.train_dir)
   ckpt = tf.train.get_checkpoint_state(FLAGS.train_dir)
 
-  # ckpt.model_checkpoint_path ="./big_models/chat_bot.ckpt-183600"
+  ckpt.model_checkpoint_path ="./ubuntu/chat_bot.ckpt-84000.meta"
   # print ckpt.model_checkpoint_path
   if ckpt and tf.gfile.Exists(ckpt.model_checkpoint_path):
     print("Reading model parameters from %s" % ckpt.model_checkpoint_path)
-    model.saver.restore(session, ckpt.model_checkpoint_path)
+    # model.saver = tf.train.import_meta_graph("./ubuntu/chat_bot.ckpt-84000.meta")
+    model.saver.restore(session, "./ubuntu/chat_bot.ckpt-84000")
   else:
     print("Created model with fresh parameters.")
     session.run(tf.global_variables_initializer())
@@ -157,6 +158,7 @@ def train():
 
 
   with tf.Session() as sess:
+    recall_at_k = streaming_recall_at_k([1,2,5])
     # Create model.
     print("Creating %d layers of %d units." % (FLAGS.num_layers, FLAGS.size))
     model = create_model(sess, False,beam_search=beam_search, beam_size=beam_size, attention=attention)
@@ -369,7 +371,7 @@ def decode():
                   logits = logits[:output.index(EOS_ID)]
 
               print(" ".join([tf.compat.as_str(rev_vocab[output]) for output in outputs]))
-              print(calculate_response_pro(logits, outputs))
+              # print(calculate_response_pro(logits, outputs))
               print("> ", "")
               sys.stdout.flush()
               sentence = sys.stdin.readline()

@@ -67,13 +67,17 @@ FLAGS = tf.app.flags.FLAGS
 # See seq2seq_model.Seq2SeqModel for details of how they work.
 # _buckets = [(5, 10), (10, 15), (20, 25), (40, 50)]
 _buckets = [(30, 20), (50, 30), (100, 50), (120, 80), (160, 160)]
-max_seqlen = 40
+max_seqlen = 160
+
+def softmax(logit):
+    return np.exp(logit) / np.sum(np.exp(logit), axis=0)
 
 def calculate_response_pro(logits, outputs):
     total_pro = 1
-    for i, pro in enumerate(logits):
+    for i, logit in enumerate(logits):
         if i >= len(outputs):
             break
+        pro = softmax(logit)
         total_pro = total_pro * pro[outputs[i]]
     return total_pro
 
@@ -132,12 +136,11 @@ def create_model(session, forward_only, beam_search, beam_size = 10, attention =
   print(FLAGS.train_dir)
   ckpt = tf.train.get_checkpoint_state(FLAGS.train_dir)
 
-  ckpt.model_checkpoint_path ="./ubuntu/chat_bot.ckpt-84000.meta"
   # print ckpt.model_checkpoint_path
   if ckpt and tf.gfile.Exists(ckpt.model_checkpoint_path):
     print("Reading model parameters from %s" % ckpt.model_checkpoint_path)
     # model.saver = tf.train.import_meta_graph("./ubuntu/chat_bot.ckpt-84000.meta")
-    model.saver.restore(session, "./ubuntu/chat_bot.ckpt-84000")
+    model.saver.restore(session, ckpt.model_checkpoint_path)
   else:
     print("Created model with fresh parameters.")
     session.run(tf.global_variables_initializer())
@@ -262,10 +265,10 @@ def eval():
             if len(test_set[bucket_id]) == 0:
                 print("  eval: empty bucket %d" % (bucket_id))
                 continue
-            bucket_pro = []
             results = [0, 0]
             # Todo: model.get_test_batch function: get all data in one test_set bucket
             while results[1] < len(test_set[bucket_id]):
+                bucket_pro = []
                 encoder_inputs, decoder_inputs, target_weights, end_idx = model.get_test_batch(
                     test_set, bucket_id, int(results[1]))
 

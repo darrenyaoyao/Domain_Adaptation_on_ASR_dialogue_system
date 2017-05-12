@@ -6,15 +6,15 @@ Solving ASR Error problem in dialogue system with Domain Adaptation Neural Netwo
 
 + ASR Handling
   1. Reference to [attentive recurrent NN with asr error modeling on headline generation] (https://arxiv.org/pdf/1612.08375.pdf)
-    * confusion matrix
+      * confusion matrix
 
 + Data
   1. Ubuntu Corpus
-    * For Dual LSTM
-    * For Seq2seq
+      * For Dual LSTM
+      * For Seq2seq
   2. Cornell Movie Corpus
-    * For Dual LSTM
-    * For Seq2seq
+      * For Dual LSTM
+      * For Seq2seq
 
 + Generate ASR Error
   1. Text to Speech

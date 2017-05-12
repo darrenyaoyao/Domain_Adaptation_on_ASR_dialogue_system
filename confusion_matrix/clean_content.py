@@ -85,3 +85,4 @@ if __name__=='__main__':
         if sentence != "":
             corpus.append(sentence)
     origin_data = corpus
+    saveFile(sys.argv[3],origin_data)

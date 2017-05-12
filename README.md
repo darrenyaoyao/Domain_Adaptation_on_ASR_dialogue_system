@@ -5,7 +5,7 @@ Solving ASR Error problem in dialogue system with Domain Adaptation Neural Netwo
   2. [Sequence to Sequence](https://arxiv.org/pdf/1506.05869.pdf)
 
 + ASR Handling
-  1. Reference to [attentive recurrent NN with asr error modeling on headline generation] (https://arxiv.org/pdf/1612.08375.pdf)
+  1. [Reference to attentive recurrent NN with asr error modeling on headline generation] (https://arxiv.org/pdf/1612.08375.pdf)
       * confusion matrix
 
 + Data

@@ -1,11 +1,16 @@
 import random
+random.seed(10)
 
 ''' 
     1. Read from 'movie-lines.txt'
     2. Create a dictionary with ( key = line_id, value = text )
 '''
 def get_id2line():
-    lines=open('original_corpus/movie_lines.txt').read().split('\n')
+    #lines=open('original_data/original_corpus/movie_lines.txt','r',
+    #           encoding='utf-8',errors='ignore').read().split('\n')
+    #lines=open('original_data/original_corpus/movie_lines.txt','r',
+    #           encoding='latin1').read().split('\n')
+    lines=open('original_data/original_corpus/movie_lines.txt').read().split('\n')
     id2line = {}
     for line in lines:
         _line = line.split(' +++$+++ ')
@@ -18,7 +23,11 @@ def get_id2line():
     2. Create a list of [list of line_id's]
 '''
 def get_conversations():
-    conv_lines = open('original_corpus/movie_conversations.txt').read().split('\n')
+    #conv_lines = open('original_data/original_corpus/movie_conversations.txt','r',
+    #                  encoding='utf-8',errors='ignore').read().split('\n')
+    #conv_lines = open('original_data/original_corpus/movie_conversations.txt','r',
+    #                  encoding='latin1').read().split('\n')
+    conv_lines = open('original_data/original_corpus/movie_conversations.txt').read().split('\n')
     convs = [ ]
     for line in conv_lines[:-1]:
         _line = line.split(' +++$+++ ')[-1][1:-1].replace("'","").replace(" ","")
@@ -67,7 +76,7 @@ def gather_dataset(convs, id2line):
     3. test.enc  : Encoder input for testing
     4. test.dec  : Decoder input for testing
 '''
-def prepare_seq2seq_files(questions, answers, path='corpus_normal/',TESTSET_SIZE = 30000):
+def prepare_seq2seq_files(questions, answers, path='original_data/normal_form_for_seq2seq/',TESTSET_SIZE = 30000):
     
     # open files
     train_enc = open(path + 'train.enc','w')
@@ -86,7 +95,7 @@ def prepare_seq2seq_files(questions, answers, path='corpus_normal/',TESTSET_SIZE
             train_enc.write(questions[i]+'\n')
             train_dec.write(answers[i]+ '\n' )
         if i%10000 == 0:
-            print '\n>> written %d lines' %(i) 
+            print ('\n>> written %d lines' %(i)) 
 
     # close files
     train_enc.close()
@@ -100,9 +109,9 @@ def prepare_seq2seq_files(questions, answers, path='corpus_normal/',TESTSET_SIZE
 ####
 
 id2line = get_id2line()
-print '>> gathered id2line dictionary.\n'
+print ('>> gathered id2line dictionary.\n')
 convs = get_conversations()
-print '>> gathered conversations.\n'
+print ('>> gathered conversations.\n')
 questions, answers = gather_dataset(convs,id2line)
-print '>> gathered questions and answers.\n'
+print ('>> gathered questions and answers.\n')
 prepare_seq2seq_files(questions,answers)

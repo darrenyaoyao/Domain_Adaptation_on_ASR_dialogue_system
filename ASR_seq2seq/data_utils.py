@@ -103,7 +103,8 @@ def data_to_token_ids(data_path, target_path, vocabulary_path,
                                             tokenizer, normalize_digits)
           tokens_file.write(" ".join([str(tok) for tok in token_ids]) + "\n")
 
-def prepare_data(data_dir, from_train_path, to_train_path, from_dev_path, to_dev_path, from_vocabulary_size,
+def prepare_data(data_dir, from_train_path, from_asr_train_path, to_train_path,
+                 from_dev_path, from_asr_dev_path, to_dev_path, from_vocabulary_size,
                  to_vocabulary_size, tokenizer=None):
   # Create vocabularies of the appropriate sizes.
   to_vocab_path = os.path.join(data_dir, "vocab%d.to" % to_vocabulary_size)
@@ -117,12 +118,20 @@ def prepare_data(data_dir, from_train_path, to_train_path, from_dev_path, to_dev
   data_to_token_ids(to_train_path, to_train_ids_path, to_vocab_path, tokenizer)
   data_to_token_ids(from_train_path, from_train_ids_path, from_vocab_path, tokenizer)
 
+  # Create token ids for the asr_training data.
+  from_asr_train_ids_path = from_asr_train_path + (".ids%d" % from_vocabulary_size)
+  data_to_token_ids(from_asr_train_path, from_asr_train_ids_path, from_vocab_path, tokenizer)
+
   # Create token ids for the development data.
   to_dev_ids_path = to_dev_path + (".ids%d" % to_vocabulary_size)
   from_dev_ids_path = from_dev_path + (".ids%d" % from_vocabulary_size)
   data_to_token_ids(to_dev_path, to_dev_ids_path, to_vocab_path, tokenizer)
   data_to_token_ids(from_dev_path, from_dev_ids_path, from_vocab_path, tokenizer)
 
-  return (from_train_ids_path, to_train_ids_path,
-          from_dev_ids_path, to_dev_ids_path,
+  # Create token ids for the asr_development data.
+  from_asr_dev_ids_path = from_asr_dev_path + (".ids%d" % from_vocabulary_size)
+  data_to_token_ids(from_asr_dev_path, from_asr_dev_ids_path, from_vocab_path, tokenizer)
+
+  return (from_train_ids_path, from_asr_train_ids_path, to_train_ids_path,
+          from_dev_ids_path, from_asr_dev_ids_path, to_dev_ids_path,
           from_vocab_path, to_vocab_path)

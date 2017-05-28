@@ -5,10 +5,10 @@ from __future__ import print_function
 import random
 
 import numpy as np
-from six.moves import xrange  # pylint: disable=redefined-builtin
 import tensorflow as tf
 
 import data_utils
+import seq2seq
 
 class Seq2SeqModel(object):
   def __init__(self,
@@ -65,15 +65,17 @@ class Seq2SeqModel(object):
       def single_cell():
         return tf.contrib.rnn.GRUCell(size)
       if use_lstm:
-        def singel_cell():
+        def single_cell():
           return tf.contrib.rnn.BasicLSTMCell(size)
       cell = single_cell()
       if num_layers > 1:
         cell = tf.contrib.rnn.MultiRNNCell([single_cell() for _ in range(num_layers)])
 
       # The seq2seq function: we use embedding for the input and attention.
-      def seq2seq_f(encoder_inputs, decoder_inputs, do_decode):
-        return tf.contrib.legacy_seq2seq.embedding_attention_seq2seq(
+      # seq2seq function多了一個asr_encoder_inputs
+      def seq2seq_f(asr_encoder_inputs, encoder_inputs, decoder_inputs, do_decode):
+        return seq2seq.embedding_attention_seq2seq(
+          asr_encoder_inputs,
           encoder_inputs,
           decoder_inputs,
           cell,
@@ -85,13 +87,17 @@ class Seq2SeqModel(object):
           dtype=dtype)
 
       # Feeds for inputs.
+      # 幫asr_encoder_inputs建placeholder
+      self.asr_encoder_inputs = []
       self.encoder_inputs = []
       self.decoder_inputs = []
       self.target_weights = []
-      for i in xrange(buckets[-1][0]):
+      for i in range(buckets[-1][0]):
+        self.asr_encoder_inputs.append(tf.placeholder(tf.int32, shape=[None,],
+                                                name="asr_encoder{0}".format(i)))
         self.encoder_inputs.append(tf.placeholder(tf.int32, shape=[None,],
                                                 name="encoder{0}".format(i)))
-      for i in xrange(buckets[-1][1]+1):
+      for i in range(buckets[-1][1]+1):
         self.decoder_inputs.append(tf.placeholder(tf.int32, shape=[None,],
                                                 name="decoder{0}".format(i)))
         self.target_weights.append(tf.placeholder(dtype, shape=[None,],
@@ -99,46 +105,62 @@ class Seq2SeqModel(object):
 
       # Our targets are decoder inputs shifted by one.
       targets = [self.decoder_inputs[i+1]
-                for i in xrange(len(self.decoder_inputs) - 1)]
+                for i in range(len(self.decoder_inputs) - 1)]
       # Training outputs and losses.
       if forward_only:
-        self.outputs, self.losses = tf.contrib.legacy_seq2seq.model_with_buckets(
-            self.encoder_inputs, self.decoder_inputs, targets,
-            self.target_weights, buckets, lambda x, y: seq2seq_f(x, y, True),
+        # model_with_buckets input多了self.asr_encoder_inputs，output則是self.context_vector_losses
+        # seq2seq_f多了一個input
+        self.outputs, self.losses, self.context_vector_losses = seq2seq.model_with_buckets(
+            self.asr_encoder_inputs, self.encoder_inputs, self.decoder_inputs,
+            targets, self.target_weights, buckets,
+            lambda x, y, z: seq2seq_f(x, y, z, True),
             softmax_loss_function=softmax_loss_function)
         # If we use output projection, we need to project outputs for decoding.
         if output_projection is not None:
-          for b in xrange(len(buckets)):
+          for b in range(len(buckets)):
             self.outputs[b] = [
               tf.matmul(output, output_projection[0]) + output_projection[1]
               for output in self.outputs[b]
             ]
       else:
-        self.outputs, self.losses = tf.contrib.legacy_seq2seq.model_with_buckets(
-            self.encoder_inputs, self.decoder_inputs, targets,
-            self.target_weights, buckets,
-            lambda x, y: seq2seq_f(x, y, False),
+        self.outputs, self.losses, self.context_vector_losses = seq2seq.model_with_buckets(
+            self.asr_encoder_inputs, self.encoder_inputs, self.decoder_inputs,
+            targets, self.target_weights, buckets,
+            lambda x, y, z: seq2seq_f(x, y, z, False),
             softmax_loss_function=softmax_loss_function)
 
       # Gradients and SGD update operation for training the model.
       params = tf.trainable_variables()
       if not forward_only:
-        self.gradient_norms = []
-        self.updates = []
+        self.gradient_norms_1 = []
+        self.gradient_norms_2 = []
+        self.updates_1 = []
+        self.updates_2 = []
         opt = tf.train.GradientDescentOptimizer(self.learning_rate)
-        for b in xrange(len(buckets)):
-          gradients = tf.gradients(self.losses[b], params)
-          clipped_gradients, norm = tf.clip_by_global_norm(gradients, max_gradient_norm)
-          self.gradient_norms.append(norm)
-          self.updates.append(opt.apply_gradients(
-              zip(clipped_gradients, params), global_step=self.global_step))
+        for b in range(len(buckets)):
+          # 分別對self.losses跟self.context_vector_losses作gradient
+          # 這部分感覺最有可能有問題
+          gradients_1 = tf.gradients(self.losses[b], params)
+          gradients_2 = tf.gradients(self.context_vector_losses[b], params)
+          clipped_gradients_1, norm_1 = tf.clip_by_global_norm(gradients_1, max_gradient_norm)
+          clipped_gradients_2, norm_2 = tf.clip_by_global_norm(gradients_2, max_gradient_norm)
+          self.gradient_norms_1.append(norm_1)
+          self.gradient_norms_2.append(norm_2)
+          self.updates_1.append(opt.apply_gradients(
+              zip(clipped_gradients_1, params), global_step=self.global_step))
+          self.updates_2.append(opt.apply_gradients(
+              zip(clipped_gradients_2, params), global_step=self.global_step))
 
       self.saver = tf.train.Saver(tf.global_variables())
 
-  def step(self, session, encoder_inputs, decoder_inputs, target_weights,
-               bucket_id, forward_only):
+  def step(self, session, asr_encoder_inputs, encoder_inputs, decoder_inputs,
+               target_weights, bucket_id, forward_only, pretrain=False,
+               run_options=None, run_metadata=None):
     # Check if the sizes match.
     encoder_size, decoder_size = self.buckets[bucket_id]
+    if len(asr_encoder_inputs) != encoder_size:
+      raise ValueError("ASR encoder length must be equal to the one in bucket,"
+                       " %d != %d." % (len(asr_encoder_inputs), encoder_size))
     if len(encoder_inputs) != encoder_size:
       raise ValueError("Encoder length must be equal to the one in bucket,"
                        " %d != %d." % (len(encoder_inputs), encoder_size))
@@ -150,10 +172,12 @@ class Seq2SeqModel(object):
                        " %d != %d." % (len(target_weights), decoder_size))
 
     # Input feed: encoder inputs, decoder inputs, target_weights, as provided.
+    # input feed多一個asr的
     input_feed = {}
-    for l in xrange(encoder_size):
+    for l in range(encoder_size):
+      input_feed[self.asr_encoder_inputs[l].name] = asr_encoder_inputs[l]
       input_feed[self.encoder_inputs[l].name] = encoder_inputs[l]
-    for l in xrange(decoder_size):
+    for l in range(decoder_size):
       input_feed[self.decoder_inputs[l].name] = decoder_inputs[l]
       input_feed[self.target_weights[l].name] = target_weights[l]
 
@@ -163,32 +187,45 @@ class Seq2SeqModel(object):
 
     # Output feed: depends on whether we do a backward step or not.
     if not forward_only:
-      output_feed = [self.updates[bucket_id],  # Update Op that does SGD.
-                      self.gradient_norms[bucket_id],  # Gradient norm.
-                      self.losses[bucket_id]]  # Loss for this batch.
+      #原本的update op跟gradient norm都變成各兩個，分別是self.losses跟self.context_vector_losses的
+      output_feed = [self.updates_1[bucket_id],  # Update Op for self.losses that does SGD.
+                     self.updates_2[bucket_id],  # Update Op for self.context_vector_losses that does SGD.
+                     self.gradient_norms_1[bucket_id],  # Gradient norm for self.losses.
+                     self.gradient_norms_2[bucket_id],  # Gradient norm for self.context_vector_losses.
+                     self.losses[bucket_id],  # Loss for this batch.
+                     self.context_vector_losses[bucket_id]]  # Context vector loss for this batch
     else:
-      output_feed = [self.losses[bucket_id]]  # Loss for this batch.
-    for l in xrange(decoder_size):  # Output logits.
+      output_feed = [self.losses[bucket_id],  # Loss for this batch.
+                     self.context_vector_losses[bucket_id]]  # Context vector loss for this batch.
+    for l in range(decoder_size):  # Output logits.
       output_feed.append(self.outputs[bucket_id][l])
-
     outputs = session.run(output_feed, input_feed)
+    #原本回傳3個東西，現在都會多回傳一個context_vector_losses
     if not forward_only:
-      return outputs[1], outputs[2], None  # Gradient norm, loss, no outputs.
+      return outputs[2], outputs[4], outputs[5], None  # Gradient norm, loss, context vector loss, no outputs.
     else:
-      return None, outputs[0], outputs[1:]  # No gradient norm, loss, outputs.
+      return None, outputs[0], outputs[1], outputs[2:]  # No gradient norm, loss, context vector loss, outputs.
 
-  def get_batch(self, data, bucket_id):
+  def get_batch(self, data, asr_data, bucket_id):
     encoder_size, decoder_size = self.buckets[bucket_id]
-    encoder_inputs, decoder_inputs = [], []
+    asr_encoder_inputs, encoder_inputs, decoder_inputs = [], [], []
 
     # Get a random batch of encoder and decoder inputs from data,
     # pad them if needed, reverse encoder inputs and add GO to decoder.
-    for _ in xrange(self.batch_size):
-      encoder_input, decoder_input = random.choice(data[bucket_id])
-
+    for _ in range(self.batch_size):
+      #這裡是先從0~len(data[bucket_id])中隨機選出一個index
+      #然後根據這個index找出一筆original的encoder_input，decoder_input，以及對應的asr_encoder_input
+      #後面asr_encoder_input的pad跟reindex都跟原來一樣
+      idx = random.randrange(len(data[bucket_id]))
+      encoder_input, decoder_input = data[bucket_id][idx]
+      asr_encoder_input = asr_data[bucket_id][idx][0]
       # Encoder inputs are padded and then reversed.
       encoder_pad = [data_utils.PAD_ID] * (encoder_size - len(encoder_input))
       encoder_inputs.append(list(reversed(encoder_input + encoder_pad)))
+
+      # ASR encoder inputs are padded and then reversed.
+      asr_encoder_pad = [data_utils.PAD_ID] * (encoder_size - len(asr_encoder_input))
+      asr_encoder_inputs.append(list(reversed(asr_encoder_input + asr_encoder_pad)))
 
       # Decoder inputs get an extra "GO" symbol, and are padded then.
       decoder_pad_size = decoder_size - len(decoder_input) - 1
@@ -196,23 +233,30 @@ class Seq2SeqModel(object):
                             [data_utils.PAD_ID] * decoder_pad_size)
 
     # Now we create batch-major vectors from the data selected above.
-    batch_encoder_inputs, batch_decoder_inputs, batch_weights = [], [], []
+    batch_encoder_inputs, batch_asr_encoder_inputs, batch_decoder_inputs, batch_weights = [], [], [], []
 
     # Batch encoder inputs are just re-indexed encoder_inputs.
-    for length_idx in xrange(encoder_size):
+    for length_idx in range(encoder_size):
       batch_encoder_inputs.append(
             np.array([encoder_inputs[batch_idx][length_idx]
-                    for batch_idx in xrange(self.batch_size)], dtype=np.int32))
+                    for batch_idx in range(self.batch_size)], dtype=np.int32))
+
+    # Batch ASR encoder inputs are just re-indexed encoder_inputs.
+    for length_idx in range(encoder_size):
+      tmp = []
+      batch_asr_encoder_inputs.append(
+            np.array([asr_encoder_inputs[batch_idx][length_idx]
+                    for batch_idx in range(self.batch_size)], dtype=np.int32))
 
     # Batch decoder inputs are re-indexed decoder_inputs, we create weights.
-    for length_idx in xrange(decoder_size):
+    for length_idx in range(decoder_size):
       batch_decoder_inputs.append(
             np.array([decoder_inputs[batch_idx][length_idx]
-                    for batch_idx in xrange(self.batch_size)], dtype=np.int32))
+                    for batch_idx in range(self.batch_size)], dtype=np.int32))
 
       # Create target_weights to be 0 for targets that are padding.
       batch_weight = np.ones(self.batch_size, dtype=np.float32)
-      for batch_idx in xrange(self.batch_size):
+      for batch_idx in range(self.batch_size):
       # We set weight to 0 if the corresponding target is a PAD symbol.
       # The corresponding target is decoder_input shifted by 1 forward.
         if length_idx < decoder_size - 1:
@@ -220,4 +264,4 @@ class Seq2SeqModel(object):
         if length_idx == decoder_size - 1 or target == data_utils.PAD_ID:
           batch_weight[batch_idx] = 0.0
       batch_weights.append(batch_weight)
-    return batch_encoder_inputs, batch_decoder_inputs, batch_weights
+    return batch_asr_encoder_inputs, batch_encoder_inputs, batch_decoder_inputs, batch_weights

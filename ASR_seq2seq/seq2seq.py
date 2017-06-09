@@ -86,14 +86,17 @@ def _extract_argmax_and_embed(embedding,
 
 
 def rnn_decoder(decoder_inputs,
-                initial_state,
+                encoder_state,
+                asr_encoder_state,
                 cell,
+                pretrain,
                 loop_function=None,
                 scope=None):
   """RNN decoder for the sequence-to-sequence model.
   Args:
     decoder_inputs: A list of 2D Tensors [batch_size x input_size].
-    initial_state: 2D Tensor with shape [batch_size x cell.state_size].
+    encoder_state: 2D Tensor with shape [batch_size x cell.state_size].
+    asr_encoder_state: 2D Tensor with shape [batch_size x cell.state_size].
     cell: core_rnn_cell.RNNCell defining the cell function and size.
     loop_function: If not None, this function will be applied to the i-th output
       in order to generate the i+1-st input, and decoder_inputs will be ignored,
@@ -114,7 +117,12 @@ def rnn_decoder(decoder_inputs,
          states can be the same. They are different for LSTM cells though.)
   """
   with variable_scope.variable_scope(scope or "rnn_decoder"):
-    state = initial_state
+    if pretrain:
+      print('original_encoder')
+      state = encoder_state
+    else:
+      print('asr_encoder')
+      state = asr_encoder_state
     outputs = []
     prev = None
     for i, inp in enumerate(decoder_inputs):
@@ -127,7 +135,7 @@ def rnn_decoder(decoder_inputs,
       outputs.append(output)
       if loop_function is not None:
         prev = output
-  return outputs, state
+  return outputs, state, encoder_state, asr_encoder_state
 
 
 def basic_rnn_seq2seq(encoder_inputs,
@@ -199,10 +207,12 @@ def tied_rnn_seq2seq(encoder_inputs,
 
 
 def embedding_rnn_decoder(decoder_inputs,
-                          initial_state,
+                          encoder_state,
+                          asr_encoder_state,
                           cell,
                           num_symbols,
                           embedding_size,
+                          pretrain,
                           output_projection=None,
                           feed_previous=False,
                           update_embedding_for_previous=True,
@@ -210,7 +220,8 @@ def embedding_rnn_decoder(decoder_inputs,
   """RNN decoder with embedding and a pure-decoding option.
   Args:
     decoder_inputs: A list of 1D batch-sized int32 Tensors (decoder inputs).
-    initial_state: 2D Tensor [batch_size x cell.state_size].
+    encoder_state: 2D Tensor [batch_size x cell.state_size].
+    asr_encoder_state: 2D Tensor [batch_size x cell.state_size].
     cell: core_rnn_cell.RNNCell defining the cell function.
     num_symbols: Integer, how many symbols come into the embedding.
     embedding_size: Integer, the length of the embedding vector for each symbol.
@@ -260,15 +271,18 @@ def embedding_rnn_decoder(decoder_inputs,
     emb_inp = (embedding_ops.embedding_lookup(embedding, i)
                for i in decoder_inputs)
     return rnn_decoder(
-        emb_inp, initial_state, cell, loop_function=loop_function)
+        emb_inp, encoder_state, asr_encoder_state, cell,
+        pretrain=pretrain, loop_function=loop_function)
 
 
-def embedding_rnn_seq2seq(encoder_inputs,
+def embedding_rnn_seq2seq(asr_encoder_inputs,
+                          encoder_inputs,
                           decoder_inputs,
                           cell,
                           num_encoder_symbols,
                           num_decoder_symbols,
                           embedding_size,
+                          pretrain,
                           output_projection=None,
                           feed_previous=False,
                           dtype=None,
@@ -281,6 +295,7 @@ def embedding_rnn_seq2seq(encoder_inputs,
   input_size]). Then it runs RNN decoder, initialized with the last
   encoder state, on embedded decoder_inputs.
   Args:
+    asr_encoder_inputs: A list of 1D int32 Tensors of shape [batch_size].
     encoder_inputs: A list of 1D int32 Tensors of shape [batch_size].
     decoder_inputs: A list of 1D int32 Tensors of shape [batch_size].
     cell: core_rnn_cell.RNNCell defining the cell function and size.
@@ -322,8 +337,12 @@ def embedding_rnn_seq2seq(encoder_inputs,
         encoder_cell,
         embedding_classes=num_encoder_symbols,
         embedding_size=embedding_size)
-    _, encoder_state = core_rnn.static_rnn(
+    with variable_scope.variable_scope("original_encoder"):
+      _, encoder_state = core_rnn.static_rnn(
         encoder_cell, encoder_inputs, dtype=dtype)
+    with variable_scope.variable_scope("asr_encoder"):
+      _, asr_encoder_state = core_rnn.static_rnn(
+        encoder_cell, asr_encoder_inputs, dtype=dtype)
 
     # Decoder.
     if output_projection is None:
@@ -333,9 +352,11 @@ def embedding_rnn_seq2seq(encoder_inputs,
       return embedding_rnn_decoder(
           decoder_inputs,
           encoder_state,
+          asr_encoder_state,
           cell,
           num_decoder_symbols,
           embedding_size,
+          pretrain=pretrain,
           output_projection=output_projection,
           feed_previous=feed_previous)
 
@@ -347,9 +368,11 @@ def embedding_rnn_seq2seq(encoder_inputs,
         outputs, state = embedding_rnn_decoder(
             decoder_inputs,
             encoder_state,
+            asr_encoder_state,
             cell,
             num_decoder_symbols,
             embedding_size,
+            pretrain=pretrain,
             output_projection=output_projection,
             feed_previous=feed_previous_bool,
             update_embedding_for_previous=False)
@@ -367,7 +390,7 @@ def embedding_rnn_seq2seq(encoder_inputs,
     if nest.is_sequence(encoder_state):
       state = nest.pack_sequence_as(
           structure=encoder_state, flat_sequence=state_list)
-    return outputs_and_state[:outputs_len], state
+    return outputs_and_state[:outputs_len], state, encoder_state, asr_encoder_state
 
 
 def attention_decoder(decoder_inputs,
@@ -729,6 +752,7 @@ def embedding_attention_seq2seq(asr_encoder_inputs,
         outputs, state = embedding_attention_decoder(
             decoder_inputs,
             encoder_state,
+            asr_encoder_state,
             attention_states,
             cell,
             num_decoder_symbols,

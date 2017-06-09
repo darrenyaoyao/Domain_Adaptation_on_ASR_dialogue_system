@@ -41,6 +41,10 @@ tf.app.flags.DEFINE_integer("steps_per_checkpoint", 200,
                             "How many training steps to do per checkpoint.")
 tf.app.flags.DEFINE_boolean("decode", False,
                             "Set to True for interactive decoding.")
+tf.app.flags.DEFINE_boolean("attention", False,
+                            "Set to True for attention decoder.")
+tf.app.flags.DEFINE_boolean("pretrain", False,
+                            "Set to True for pretraining.")
 tf.app.flags.DEFINE_boolean("self_test", False,
                             "Run a self-test if this is set to True.")
 tf.app.flags.DEFINE_boolean("use_fp16", False,
@@ -51,6 +55,7 @@ FLAGS = tf.app.flags.FLAGS
 # We use a number of buckets and pad to the closest one for efficiency.
 # See seq2seq_model.Seq2SeqModel for details of how they work.
 _buckets = [(5, 10), (10, 15), (20, 25), (40, 50)]
+# _buckets = [(5, 10)]
 
 def read_data(source_path, asr_source_path, target_path, max_size=None):
   data_set = [[] for _ in _buckets]
@@ -84,7 +89,7 @@ def read_data(source_path, asr_source_path, target_path, max_size=None):
           target = target_file.readline()
   return data_set, asr_data_set
 
-def create_model(session, forward_only):
+def create_model(session, forward_only, attention=False, pretrain=True):
   """Create translation model and initialize or load parameters in session."""
   dtype = tf.float16 if FLAGS.use_fp16 else tf.float32
   model = seq2seq_model.Seq2SeqModel(
@@ -98,6 +103,8 @@ def create_model(session, forward_only):
       FLAGS.learning_rate,
       FLAGS.learning_rate_decay_factor,
       forward_only=forward_only,
+      attention=attention,
+      pretrain=pretrain,
       dtype=dtype)
   ckpt = tf.train.get_checkpoint_state(FLAGS.train_dir)
   if ckpt and tf.train.checkpoint_exists(ckpt.model_checkpoint_path):
@@ -106,6 +113,7 @@ def create_model(session, forward_only):
   else:
     print("Created model with fresh parameters.")
     session.run(tf.global_variables_initializer())
+  summary_writer = tf.summary.FileWriter("./log/",graph=session.graph)
   return model
 
 def train():
@@ -154,7 +162,8 @@ def train():
   with tf.Session() as sess:
     # Create model.
     print("Creating %d layers of %d units." % (FLAGS.num_layers, FLAGS.size))
-    model = create_model(sess, forward_only=False)
+    model = create_model(sess, forward_only=False, attention=FLAGS.attention,
+                         pretrain=FLAGS.pretrain)
 
     # Read data into buckets and compute their sizes.
     print ("Reading development and training data (limit: %d)."
@@ -191,7 +200,8 @@ def train():
       # step與原本不同的是input多了asr_encoder_input, output多了step_cvl
       # step_cvl就是context_vector_loss，也就是original跟asr最後encoder_state的MSE
       _, step_loss, step_cvl, _ = model.step(sess, asr_encoder_inputs, encoder_inputs,
-                                             decoder_inputs, target_weights, bucket_id, False)
+                                             decoder_inputs, target_weights, bucket_id,
+                                             forward_only=False, pretrain=FLAGS.pretrain)
       step_time += (time.time() - start_time) / FLAGS.steps_per_checkpoint
       loss += step_loss / FLAGS.steps_per_checkpoint
       cvl += step_cvl / FLAGS.steps_per_checkpoint
@@ -221,15 +231,19 @@ def train():
               dev_set, asr_dev_set, bucket_id)
           _, eval_loss, eval_cvl, _ = model.step(sess, asr_encoder_inputs, encoder_inputs,
                                                  decoder_inputs, target_weights, bucket_id,
-                                                 forward_only=True)
+                                                 forward_only=True, pretrain=FLAGS.pretrain)
           eval_ppx = math.exp(float(eval_loss)) if eval_loss < 300 else float("inf")
           print("  eval: bucket %d perplexity %.2f MSE %.2f" % (bucket_id, eval_ppx, eval_cvl))
         sys.stdout.flush()
 
+def test():
+  pass
+
 def decode():
   with tf.Session() as sess:
     # Create model and load parameters.
-    model = create_model(sess, True)
+    model = create_model(sess, forward_only=True, attention=FLAGS.attention,
+                         pretrain=FLAGS.pretrain)
     model.batch_size = 1  # We decode one sentence at a time.
 
     # Load vocabularies.

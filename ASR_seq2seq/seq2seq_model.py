@@ -6,6 +6,7 @@ import random
 
 import numpy as np
 import tensorflow as tf
+from tensorflow.python.ops import variable_scope
 
 import data_utils
 import seq2seq
@@ -24,6 +25,8 @@ class Seq2SeqModel(object):
                 use_lstm=False,
                 num_samples=512,
                 forward_only=False,
+                attention=False,
+                pretrain=True,
                 dtype=tf.float32):
     self.source_vocab_size = source_vocab_size
     self.target_vocab_size = target_vocab_size
@@ -73,18 +76,34 @@ class Seq2SeqModel(object):
 
       # The seq2seq function: we use embedding for the input and attention.
       # seq2seq function多了一個asr_encoder_inputs
-      def seq2seq_f(asr_encoder_inputs, encoder_inputs, decoder_inputs, do_decode):
-        return seq2seq.embedding_attention_seq2seq(
-          asr_encoder_inputs,
-          encoder_inputs,
-          decoder_inputs,
-          cell,
-          num_encoder_symbols=source_vocab_size,
-          num_decoder_symbols=target_vocab_size,
-          embedding_size=size,
-          output_projection=output_projection,
-          feed_previous=do_decode,
-          dtype=dtype)
+      def seq2seq_f(asr_encoder_inputs, encoder_inputs, decoder_inputs, do_decode, pretrain):
+        if attention:
+          print("Attention Model")
+          return seq2seq.embedding_attention_seq2seq(
+            asr_encoder_inputs,
+            encoder_inputs,
+            decoder_inputs,
+            cell,
+            num_encoder_symbols=source_vocab_size,
+            num_decoder_symbols=target_vocab_size,
+            embedding_size=size,
+            output_projection=output_projection,
+            feed_previous=do_decode,
+            dtype=dtype)
+        else:
+          print("Simple Model")
+          return seq2seq.embedding_rnn_seq2seq(
+            asr_encoder_inputs,
+            encoder_inputs,
+            decoder_inputs,
+            cell,
+            num_encoder_symbols=source_vocab_size,
+            num_decoder_symbols=target_vocab_size,
+            embedding_size=size,
+            pretrain=pretrain,
+            output_projection=output_projection,
+            feed_previous=do_decode,
+            dtype=dtype)
 
       # Feeds for inputs.
       # 幫asr_encoder_inputs建placeholder
@@ -92,16 +111,18 @@ class Seq2SeqModel(object):
       self.encoder_inputs = []
       self.decoder_inputs = []
       self.target_weights = []
-      for i in range(buckets[-1][0]):
-        self.asr_encoder_inputs.append(tf.placeholder(tf.int32, shape=[None,],
-                                                name="asr_encoder{0}".format(i)))
-        self.encoder_inputs.append(tf.placeholder(tf.int32, shape=[None,],
-                                                name="encoder{0}".format(i)))
-      for i in range(buckets[-1][1]+1):
-        self.decoder_inputs.append(tf.placeholder(tf.int32, shape=[None,],
-                                                name="decoder{0}".format(i)))
-        self.target_weights.append(tf.placeholder(dtype, shape=[None,],
-                                                name="weight{0}".format(i)))
+      with variable_scope.variable_scope("encoder"):
+        for i in range(buckets[-1][0]):
+          self.asr_encoder_inputs.append(tf.placeholder(tf.int32, shape=[None,],
+                                                  name="asr_encoder{0}".format(i)))
+          self.encoder_inputs.append(tf.placeholder(tf.int32, shape=[None,],
+                                                  name="encoder{0}".format(i)))
+      with variable_scope.variable_scope("decoder"):
+        for i in range(buckets[-1][1]+1):
+          self.decoder_inputs.append(tf.placeholder(tf.int32, shape=[None,],
+                                                  name="decoder{0}".format(i)))
+          self.target_weights.append(tf.placeholder(dtype, shape=[None,],
+                                                  name="weight{0}".format(i)))
 
       # Our targets are decoder inputs shifted by one.
       targets = [self.decoder_inputs[i+1]
@@ -113,7 +134,7 @@ class Seq2SeqModel(object):
         self.outputs, self.losses, self.context_vector_losses = seq2seq.model_with_buckets(
             self.asr_encoder_inputs, self.encoder_inputs, self.decoder_inputs,
             targets, self.target_weights, buckets,
-            lambda x, y, z: seq2seq_f(x, y, z, True),
+            lambda x, y, z: seq2seq_f(x, y, z, True, pretrain),
             softmax_loss_function=softmax_loss_function)
         # If we use output projection, we need to project outputs for decoding.
         if output_projection is not None:
@@ -126,30 +147,38 @@ class Seq2SeqModel(object):
         self.outputs, self.losses, self.context_vector_losses = seq2seq.model_with_buckets(
             self.asr_encoder_inputs, self.encoder_inputs, self.decoder_inputs,
             targets, self.target_weights, buckets,
-            lambda x, y, z: seq2seq_f(x, y, z, False),
+            lambda x, y, z: seq2seq_f(x, y, z, False, pretrain),
             softmax_loss_function=softmax_loss_function)
 
       # Gradients and SGD update operation for training the model.
-      params = tf.trainable_variables()
+      asr_encoder_name = 'embedding_rnn_seq2seq/asr_encoder'
+      encoder_name = 'embedding_rnn_seq2seq/original_encoder'
+      # if pretrain:
+        # params = [v for v in tf.trainable_variables() if not v.name.startswith(asr_encoder_name)]
+      # else:
+        # params = [v for v in tf.trainable_variables() if v.name.startswith(asr_encoder_name)]
+      if pretrain:
+        params = [v for v in tf.trainable_variables()]
+      else:
+        params = [v for v in tf.trainable_variables() if v.name.startswith(asr_encoder_name)]
       if not forward_only:
-        self.gradient_norms_1 = []
-        self.gradient_norms_2 = []
-        self.updates_1 = []
-        self.updates_2 = []
+        self.gradient_norms = []
+        self.gradient_norms_cvl = []
+        self.updates = []
+        self.updates_cvl = []
         opt = tf.train.GradientDescentOptimizer(self.learning_rate)
         for b in range(len(buckets)):
           # 分別對self.losses跟self.context_vector_losses作gradient
-          # 這部分感覺最有可能有問題
-          gradients_1 = tf.gradients(self.losses[b], params)
-          gradients_2 = tf.gradients(self.context_vector_losses[b], params)
-          clipped_gradients_1, norm_1 = tf.clip_by_global_norm(gradients_1, max_gradient_norm)
-          clipped_gradients_2, norm_2 = tf.clip_by_global_norm(gradients_2, max_gradient_norm)
-          self.gradient_norms_1.append(norm_1)
-          self.gradient_norms_2.append(norm_2)
-          self.updates_1.append(opt.apply_gradients(
-              zip(clipped_gradients_1, params), global_step=self.global_step))
-          self.updates_2.append(opt.apply_gradients(
-              zip(clipped_gradients_2, params), global_step=self.global_step))
+          gradients = tf.gradients(self.losses[b], params)
+          gradients_cvl = tf.gradients(self.context_vector_losses[b], params)
+          clipped_gradients, norm = tf.clip_by_global_norm(gradients, max_gradient_norm)
+          clipped_gradients_cvl, norm_cvl = tf.clip_by_global_norm(gradients_cvl, max_gradient_norm)
+          self.gradient_norms.append(norm)
+          self.gradient_norms_cvl.append(norm_cvl)
+          self.updates.append(opt.apply_gradients(
+              zip(clipped_gradients, params), global_step=self.global_step))
+          self.updates_cvl.append(opt.apply_gradients(
+              zip(clipped_gradients_cvl, params), global_step=self.global_step))
 
       self.saver = tf.train.Saver(tf.global_variables())
 
@@ -188,12 +217,16 @@ class Seq2SeqModel(object):
     # Output feed: depends on whether we do a backward step or not.
     if not forward_only:
       #原本的update op跟gradient norm都變成各兩個，分別是self.losses跟self.context_vector_losses的
-      output_feed = [self.updates_1[bucket_id],  # Update Op for self.losses that does SGD.
-                     self.updates_2[bucket_id],  # Update Op for self.context_vector_losses that does SGD.
-                     self.gradient_norms_1[bucket_id],  # Gradient norm for self.losses.
-                     self.gradient_norms_2[bucket_id],  # Gradient norm for self.context_vector_losses.
-                     self.losses[bucket_id],  # Loss for this batch.
-                     self.context_vector_losses[bucket_id]]  # Context vector loss for this batch
+      if pretrain:
+        output_feed = [self.updates[bucket_id],  # Update Op for self.losses that does SGD.
+                       self.gradient_norms[bucket_id],  # Gradient norm for self.losses.
+                       self.losses[bucket_id],  # Loss for this batch.
+                       self.context_vector_losses[bucket_id]]
+      else:
+        output_feed = [self.updates_cvl[bucket_id],
+                       self.gradient_norms_cvl[bucket_id],
+                       self.losses[bucket_id],
+                       self.context_vector_losses[bucket_id]]
     else:
       output_feed = [self.losses[bucket_id],  # Loss for this batch.
                      self.context_vector_losses[bucket_id]]  # Context vector loss for this batch.
@@ -201,8 +234,12 @@ class Seq2SeqModel(object):
       output_feed.append(self.outputs[bucket_id][l])
     outputs = session.run(output_feed, input_feed)
     #原本回傳3個東西，現在都會多回傳一個context_vector_losses
+    # merged_summary_op = tf.merge_all_summaries()
     if not forward_only:
-      return outputs[2], outputs[4], outputs[5], None  # Gradient norm, loss, context vector loss, no outputs.
+      if pretrain:
+        return outputs[1], outputs[2], outputs[3], None  # Gradient norm, loss, no outputs.
+      else:
+        return outputs[1], outputs[2], outputs[3], None
     else:
       return None, outputs[0], outputs[1], outputs[2:]  # No gradient norm, loss, context vector loss, outputs.
 

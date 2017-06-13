@@ -45,6 +45,16 @@ tf.app.flags.DEFINE_boolean("attention", False,
                             "Set to True for attention decoder.")
 tf.app.flags.DEFINE_boolean("pretrain", False,
                             "Set to True for pretraining.")
+tf.app.flags.DEFINE_boolean("train_encoder", False,
+                            "Set to True for training ASR encoder.")
+tf.app.flags.DEFINE_boolean("fine_tune", False,
+                            "Set to True to fine-tune ASR seq2seq.")
+tf.app.flags.DEFINE_boolean("use_asr", False,
+                            "Set to True to use asr_encoder_state for decoding.")
+tf.app.flags.DEFINE_boolean("schedule_sampling", False,
+                            "Set to True for schedule sampling.")
+tf.app.flags.DEFINE_boolean("test", False,
+                            "Set to True for testing.")
 tf.app.flags.DEFINE_boolean("self_test", False,
                             "Run a self-test if this is set to True.")
 tf.app.flags.DEFINE_boolean("use_fp16", False,
@@ -55,7 +65,16 @@ FLAGS = tf.app.flags.FLAGS
 # We use a number of buckets and pad to the closest one for efficiency.
 # See seq2seq_model.Seq2SeqModel for details of how they work.
 _buckets = [(5, 10), (10, 15), (20, 25), (40, 50)]
-# _buckets = [(5, 10)]
+
+def read_data(source_path, asr_source_path, target_path, max_size=None):
+  data_set = [[] for _ in _buckets]
+  asr_data_set = [[] for _ in _buckets]
+
+FLAGS = tf.app.flags.FLAGS
+
+# We use a number of buckets and pad to the closest one for efficiency.
+# See seq2seq_model.Seq2SeqModel for details of how they work.
+_buckets = [(5, 10), (10, 15), (20, 25), (40, 50)]
 
 def read_data(source_path, asr_source_path, target_path, max_size=None):
   data_set = [[] for _ in _buckets]
@@ -89,7 +108,9 @@ def read_data(source_path, asr_source_path, target_path, max_size=None):
           target = target_file.readline()
   return data_set, asr_data_set
 
-def create_model(session, forward_only, attention=False, pretrain=True):
+def create_model(session, forward_only, attention=False, pretrain=False,
+                 train_encoder=False, fine_tune=False,
+                 use_asr=False, schedule_sampling=False):
   """Create translation model and initialize or load parameters in session."""
   dtype = tf.float16 if FLAGS.use_fp16 else tf.float32
   model = seq2seq_model.Seq2SeqModel(
@@ -105,6 +126,10 @@ def create_model(session, forward_only, attention=False, pretrain=True):
       forward_only=forward_only,
       attention=attention,
       pretrain=pretrain,
+      train_encoder=train_encoder,
+      fine_tune=fine_tune,
+      use_asr=use_asr,
+      schedule_sampling=schedule_sampling,
       dtype=dtype)
   ckpt = tf.train.get_checkpoint_state(FLAGS.train_dir)
   if ckpt and tf.train.checkpoint_exists(ckpt.model_checkpoint_path):
@@ -117,28 +142,6 @@ def create_model(session, forward_only, attention=False, pretrain=True):
   return model
 
 def train():
-  '''
-  from_train = None
-  to_train = None
-  from_dev = None
-  to_dev = None
-  if FLAGS.from_train_data and FLAGS.to_train_data:
-    from_train_data = FLAGS.from_train_data
-    to_train_data = FLAGS.to_train_data
-    from_dev_data = from_train_data
-    to_dev_data = to_train_data
-    if FLAGS.from_dev_data and FLAGS.to_dev_data:
-      from_dev_data = FLAGS.from_dev_data
-      to_dev_data = FLAGS.to_dev_data
-    from_train, to_train, from_dev, to_dev, _, _ = data_utils.prepare_data(
-        FLAGS.data_dir,
-        from_train_data,
-        to_train_data,
-        from_dev_data,
-        to_dev_data,
-        FLAGS.from_vocab_size,
-        FLAGS.to_vocab_size)
-  '''
   data = data_utils.prepare_data(
       FLAGS.data_dir,
       FLAGS.from_train_data,
@@ -163,7 +166,9 @@ def train():
     # Create model.
     print("Creating %d layers of %d units." % (FLAGS.num_layers, FLAGS.size))
     model = create_model(sess, forward_only=False, attention=FLAGS.attention,
-                         pretrain=FLAGS.pretrain)
+                         pretrain=FLAGS.pretrain, train_encoder=FLAGS.train_encoder,
+                         fine_tune=FLAGS.fine_tune, use_asr=FLAGS.use_asr,
+                         schedule_sampling=FLAGS.schedule_sampling)
 
     # Read data into buckets and compute their sizes.
     print ("Reading development and training data (limit: %d)."
@@ -194,14 +199,13 @@ def train():
 
       # Get a batch and make a step.
       start_time = time.time()
-      # get_batch與原本的差別是input多了asr_train_set，output則多了asr_encoder_inputs
       asr_encoder_inputs, encoder_inputs, decoder_inputs, target_weights = model.get_batch(
           train_set, asr_train_set, bucket_id)
-      # step與原本不同的是input多了asr_encoder_input, output多了step_cvl
-      # step_cvl就是context_vector_loss，也就是original跟asr最後encoder_state的MSE
       _, step_loss, step_cvl, _ = model.step(sess, asr_encoder_inputs, encoder_inputs,
                                              decoder_inputs, target_weights, bucket_id,
-                                             forward_only=False, pretrain=FLAGS.pretrain)
+                                             forward_only=False, pretrain=FLAGS.pretrain,
+                                             train_encoder=FLAGS.train_encoder,
+                                             fine_tune=FLAGS.fine_tune)
       step_time += (time.time() - start_time) / FLAGS.steps_per_checkpoint
       loss += step_loss / FLAGS.steps_per_checkpoint
       cvl += step_cvl / FLAGS.steps_per_checkpoint
@@ -231,19 +235,65 @@ def train():
               dev_set, asr_dev_set, bucket_id)
           _, eval_loss, eval_cvl, _ = model.step(sess, asr_encoder_inputs, encoder_inputs,
                                                  decoder_inputs, target_weights, bucket_id,
-                                                 forward_only=True, pretrain=FLAGS.pretrain)
+                                                 forward_only=True)
           eval_ppx = math.exp(float(eval_loss)) if eval_loss < 300 else float("inf")
           print("  eval: bucket %d perplexity %.2f MSE %.2f" % (bucket_id, eval_ppx, eval_cvl))
         sys.stdout.flush()
 
 def test():
-  pass
+  data = data_utils.prepare_data(
+      FLAGS.data_dir,
+      FLAGS.from_train_data,
+      FLAGS.from_asr_train_data,
+      FLAGS.to_train_data,
+      FLAGS.from_dev_data,
+      FLAGS.from_asr_dev_data,
+      FLAGS.to_dev_data,
+      FLAGS.from_vocab_size,
+      FLAGS.to_vocab_size)
+  from_dev = data[3]
+  from_asr_dev = data[4]
+  to_dev = data[5]
+
+  with tf.Session() as sess:
+    # Create model.
+    print("Creating %d layers of %d units." % (FLAGS.num_layers, FLAGS.size))
+    model = create_model(sess, forward_only=True, attention=FLAGS.attention,
+                         pretrain=FLAGS.pretrain, use_asr=FLAGS.use_asr)
+
+    # Read data into buckets and compute their sizes.
+    print ("Reading development and training data (limit: %d)."
+           % FLAGS.max_train_data_size)
+    dev_set, asr_dev_set = read_data(from_dev, from_asr_dev, to_dev)
+
+    loss, cvl = 0.0, 0.0
+    steps = 100
+    for bucket_id in range(len(_buckets)):
+      if len(dev_set[bucket_id]) == 0:
+        print("  eval: empty bucket %d" % (bucket_id))
+        continue
+      bucket_loss, bucket_cvl = 0.0, 0.0
+      for i in range(steps):
+        asr_encoder_inputs, encoder_inputs, decoder_inputs, target_weights = model.get_batch(
+            dev_set, asr_dev_set, bucket_id)
+        _, step_loss, step_cvl, _ = model.step(sess, asr_encoder_inputs, encoder_inputs,
+                                               decoder_inputs, target_weights, bucket_id,
+                                               forward_only=True)
+        bucket_loss += step_loss / steps
+        bucket_cvl += step_cvl / steps
+      bucket_ppx = math.exp(float(bucket_loss)) if bucket_loss < 300 else float("inf")
+      print("  test: bucket %d perplexity %.2f MSE %.2f" % (bucket_id, bucket_ppx, bucket_cvl))
+      loss += bucket_loss / len(_buckets)
+      cvl += bucket_cvl / len(_buckets)
+    ppx = math.exp(float(loss)) if loss < 300 else float("inf")
+    print(" test: perplexity %.2f MSE %.2f" % (ppx, cvl))
+    sys.stdout.flush()
 
 def decode():
   with tf.Session() as sess:
     # Create model and load parameters.
     model = create_model(sess, forward_only=True, attention=FLAGS.attention,
-                         pretrain=FLAGS.pretrain)
+                         use_asr=FLAGS.use_asr)
     model.batch_size = 1  # We decode one sentence at a time.
 
     # Load vocabularies.
@@ -309,6 +359,8 @@ def self_test():
 def main(_):
   if FLAGS.self_test:
     self_test()
+  elif FLAGS.test:
+    test()
   elif FLAGS.decode:
     decode()
   else:

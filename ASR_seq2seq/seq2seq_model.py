@@ -26,7 +26,11 @@ class Seq2SeqModel(object):
                 num_samples=512,
                 forward_only=False,
                 attention=False,
-                pretrain=True,
+                pretrain=False,
+                train_encoder=False,
+                fine_tune=False,
+                use_asr=False,
+                schedule_sampling=False,
                 dtype=tf.float32):
     self.source_vocab_size = source_vocab_size
     self.target_vocab_size = target_vocab_size
@@ -37,6 +41,7 @@ class Seq2SeqModel(object):
     self.learning_rate_decay_op = self.learning_rate.assign(
         self.learning_rate * learning_rate_decay_factor)
     self.global_step = tf.Variable(0, trainable=False)
+    self.global_step_incre = tf.assign_add(self.global_step, tf.constant(1))
 
     # If we use sampled softmax, we need an output projection
     output_projection = None
@@ -76,7 +81,8 @@ class Seq2SeqModel(object):
 
       # The seq2seq function: we use embedding for the input and attention.
       # seq2seq function多了一個asr_encoder_inputs
-      def seq2seq_f(asr_encoder_inputs, encoder_inputs, decoder_inputs, do_decode, pretrain):
+      def seq2seq_f(asr_encoder_inputs, encoder_inputs, decoder_inputs,
+                    do_decode, use_asr, schedule_sampling):
         if attention:
           print("Attention Model")
           return seq2seq.embedding_attention_seq2seq(
@@ -100,7 +106,9 @@ class Seq2SeqModel(object):
             num_encoder_symbols=source_vocab_size,
             num_decoder_symbols=target_vocab_size,
             embedding_size=size,
-            pretrain=pretrain,
+            use_asr=use_asr,
+            schedule_sampling=schedule_sampling,
+            global_step=self.global_step,
             output_projection=output_projection,
             feed_previous=do_decode,
             dtype=dtype)
@@ -127,6 +135,15 @@ class Seq2SeqModel(object):
       # Our targets are decoder inputs shifted by one.
       targets = [self.decoder_inputs[i+1]
                 for i in range(len(self.decoder_inputs) - 1)]
+
+      # Set use_asr to false when pretraining
+      if pretrain:
+        use_asr = False
+      if train_encoder:
+        use_asr = True
+      if fine_tune:
+        use_asr=True
+
       # Training outputs and losses.
       if forward_only:
         # model_with_buckets input多了self.asr_encoder_inputs，output則是self.context_vector_losses
@@ -134,7 +151,7 @@ class Seq2SeqModel(object):
         self.outputs, self.losses, self.context_vector_losses = seq2seq.model_with_buckets(
             self.asr_encoder_inputs, self.encoder_inputs, self.decoder_inputs,
             targets, self.target_weights, buckets,
-            lambda x, y, z: seq2seq_f(x, y, z, True, pretrain),
+            lambda x, y, z: seq2seq_f(x, y, z, True, use_asr, schedule_sampling),
             softmax_loss_function=softmax_loss_function)
         # If we use output projection, we need to project outputs for decoding.
         if output_projection is not None:
@@ -147,20 +164,18 @@ class Seq2SeqModel(object):
         self.outputs, self.losses, self.context_vector_losses = seq2seq.model_with_buckets(
             self.asr_encoder_inputs, self.encoder_inputs, self.decoder_inputs,
             targets, self.target_weights, buckets,
-            lambda x, y, z: seq2seq_f(x, y, z, False, pretrain),
+            lambda x, y, z: seq2seq_f(x, y, z, False, use_asr, schedule_sampling),
             softmax_loss_function=softmax_loss_function)
 
       # Gradients and SGD update operation for training the model.
       asr_encoder_name = 'embedding_rnn_seq2seq/asr_encoder'
       encoder_name = 'embedding_rnn_seq2seq/original_encoder'
-      # if pretrain:
-        # params = [v for v in tf.trainable_variables() if not v.name.startswith(asr_encoder_name)]
-      # else:
-        # params = [v for v in tf.trainable_variables() if v.name.startswith(asr_encoder_name)]
       if pretrain:
-        params = [v for v in tf.trainable_variables()]
-      else:
+        params = [v for v in tf.trainable_variables() if not v.name.startswith(asr_encoder_name)]
+      elif train_encoder:
         params = [v for v in tf.trainable_variables() if v.name.startswith(asr_encoder_name)]
+      elif fine_tune:
+        params = [v for v in tf.trainable_variables() if not v.name.startswith(encoder_name)]
       if not forward_only:
         self.gradient_norms = []
         self.gradient_norms_cvl = []
@@ -176,15 +191,15 @@ class Seq2SeqModel(object):
           self.gradient_norms.append(norm)
           self.gradient_norms_cvl.append(norm_cvl)
           self.updates.append(opt.apply_gradients(
-              zip(clipped_gradients, params), global_step=self.global_step))
+              zip(clipped_gradients, params)))
           self.updates_cvl.append(opt.apply_gradients(
-              zip(clipped_gradients_cvl, params), global_step=self.global_step))
+              zip(clipped_gradients_cvl, params)))
 
       self.saver = tf.train.Saver(tf.global_variables())
 
   def step(self, session, asr_encoder_inputs, encoder_inputs, decoder_inputs,
                target_weights, bucket_id, forward_only, pretrain=False,
-               run_options=None, run_metadata=None):
+               train_encoder=False, fine_tune=False):
     # Check if the sizes match.
     encoder_size, decoder_size = self.buckets[bucket_id]
     if len(asr_encoder_inputs) != encoder_size:
@@ -201,7 +216,6 @@ class Seq2SeqModel(object):
                        " %d != %d." % (len(target_weights), decoder_size))
 
     # Input feed: encoder inputs, decoder inputs, target_weights, as provided.
-    # input feed多一個asr的
     input_feed = {}
     for l in range(encoder_size):
       input_feed[self.asr_encoder_inputs[l].name] = asr_encoder_inputs[l]
@@ -216,30 +230,35 @@ class Seq2SeqModel(object):
 
     # Output feed: depends on whether we do a backward step or not.
     if not forward_only:
-      #原本的update op跟gradient norm都變成各兩個，分別是self.losses跟self.context_vector_losses的
       if pretrain:
         output_feed = [self.updates[bucket_id],  # Update Op for self.losses that does SGD.
                        self.gradient_norms[bucket_id],  # Gradient norm for self.losses.
                        self.losses[bucket_id],  # Loss for this batch.
                        self.context_vector_losses[bucket_id]]
-      else:
+      elif train_encoder:
         output_feed = [self.updates_cvl[bucket_id],
                        self.gradient_norms_cvl[bucket_id],
                        self.losses[bucket_id],
                        self.context_vector_losses[bucket_id]]
+      elif fine_tune:
+        output_feed = [self.updates[bucket_id],
+                       self.updates_cvl[bucket_id],
+                       self.gradient_norms[bucket_id],
+                       self.gradient_norms_cvl[bucket_id],
+                       self.losses[bucket_id],
+                       self.context_vector_losses[bucket_id]]
+      output_feed.append(self.global_step_incre)
     else:
       output_feed = [self.losses[bucket_id],  # Loss for this batch.
                      self.context_vector_losses[bucket_id]]  # Context vector loss for this batch.
     for l in range(decoder_size):  # Output logits.
       output_feed.append(self.outputs[bucket_id][l])
     outputs = session.run(output_feed, input_feed)
-    #原本回傳3個東西，現在都會多回傳一個context_vector_losses
-    # merged_summary_op = tf.merge_all_summaries()
     if not forward_only:
-      if pretrain:
-        return outputs[1], outputs[2], outputs[3], None  # Gradient norm, loss, no outputs.
+      if fine_tune:
+        return outputs[2], outputs[4], outputs[5], None  # Gradient norm, loss, context vector loss, no outputs.
       else:
-        return outputs[1], outputs[2], outputs[3], None
+        return outputs[1], outputs[2], outputs[3], None  # Gradient norm, loss, context vector loss, no outputs.
     else:
       return None, outputs[0], outputs[1], outputs[2:]  # No gradient norm, loss, context vector loss, outputs.
 

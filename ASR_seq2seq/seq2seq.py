@@ -42,6 +42,7 @@ from six.moves import zip  # pylint: disable=redefined-builtin
 from tensorflow.contrib.rnn.python.ops import core_rnn
 from tensorflow.contrib.rnn.python.ops import core_rnn_cell
 from tensorflow.contrib.rnn.python.ops import core_rnn_cell_impl
+from tensorflow.contrib.distributions.python.ops import categorical
 from tensorflow.python.framework import dtypes
 from tensorflow.python.framework import ops
 from tensorflow.python.ops import array_ops
@@ -84,13 +85,36 @@ def _extract_argmax_and_embed(embedding,
 
   return loop_function
 
+def _extract_sample_and_embed(embedding,
+                              output_projection=None,
+                              update_embedding=True):
+  def loop_function(prev, _):
+    if output_projection is not None:
+      prev = nn_ops.xw_plus_b(prev, output_projection[0], output_projection[1])
+    dist = categorical.Categorical(logits=prev)
+    prev_symbol = dist.sample()
+    emb_prev = embedding_ops.embedding_lookup(embedding, prev_symbol)
+    if not update_embedding:
+      emb_prev = array_ops.stop_gradient(emb_prev)
+    return emb_prev
+
+  return loop_function
+
+
+def _get_epsilon(i, decay='inverse_sigmoid'):
+  if decay == 'inverse_sigmoid':
+    k = 1000
+    return tf.cast((k / (k + tf.exp(i / k))), dtype=tf.float32)
+
 
 def rnn_decoder(decoder_inputs,
                 encoder_state,
                 asr_encoder_state,
                 cell,
-                pretrain,
-                loop_function=None,
+                use_asr,
+                global_step,
+                loop_function_argmax=None,
+                loop_function_sample=None,
                 scope=None):
   """RNN decoder for the sequence-to-sequence model.
   Args:
@@ -117,23 +141,28 @@ def rnn_decoder(decoder_inputs,
          states can be the same. They are different for LSTM cells though.)
   """
   with variable_scope.variable_scope(scope or "rnn_decoder"):
-    if pretrain:
-      print('original_encoder')
-      state = encoder_state
-    else:
+    if use_asr:
       print('asr_encoder')
       state = asr_encoder_state
+    else:
+      print('original_encoder')
+      state = encoder_state
     outputs = []
     prev = None
+    epsilon_i = _get_epsilon(global_step)
     for i, inp in enumerate(decoder_inputs):
-      if loop_function is not None and prev is not None:
-        with variable_scope.variable_scope("loop_function", reuse=True):
-          inp = loop_function(prev, i)
+      if loop_function_sample is not None and prev is not None:
+        with variable_scope.variable_scope("loop_function_ss", reuse=True):
+          rand = tf.random_uniform(shape=[])
+          inp = control_flow_ops.cond(rand < epsilon_i, lambda: inp, lambda: loop_function_sample(prev, i))
+      elif loop_function_argmax is not None and prev is not None:
+        with variable_scope.variable_scope("loop_function_argmax", reuse=True):
+          inp = loop_function_argmax(prev, i)
       if i > 0:
         variable_scope.get_variable_scope().reuse_variables()
       output, state = cell(inp, state)
       outputs.append(output)
-      if loop_function is not None:
+      if loop_function_sample is not None or loop_function_argmax is not None:
         prev = output
   return outputs, state, encoder_state, asr_encoder_state
 
@@ -212,7 +241,9 @@ def embedding_rnn_decoder(decoder_inputs,
                           cell,
                           num_symbols,
                           embedding_size,
-                          pretrain,
+                          use_asr,
+                          schedule_sampling,
+                          global_step,
                           output_projection=None,
                           feed_previous=False,
                           update_embedding_for_previous=True,
@@ -265,14 +296,24 @@ def embedding_rnn_decoder(decoder_inputs,
 
     embedding = variable_scope.get_variable("embedding",
                                             [num_symbols, embedding_size])
-    loop_function = _extract_argmax_and_embed(
-        embedding, output_projection,
-        update_embedding_for_previous) if feed_previous else None
+    loop_function_argmax = None
+    loop_function_sample = None
+    if schedule_sampling:
+      loop_function_sample = _extract_sample_and_embed(
+          embedding, output_projection,
+          update_embedding_for_previous)
+    elif feed_previous:
+      loop_function_argmax = _extract_argmax_and_embed(
+          embedding, output_projection,
+          update_embedding_for_previous)
+
     emb_inp = (embedding_ops.embedding_lookup(embedding, i)
                for i in decoder_inputs)
     return rnn_decoder(
         emb_inp, encoder_state, asr_encoder_state, cell,
-        pretrain=pretrain, loop_function=loop_function)
+        use_asr=use_asr, global_step=global_step,
+        loop_function_argmax=loop_function_argmax,
+        loop_function_sample=loop_function_sample)
 
 
 def embedding_rnn_seq2seq(asr_encoder_inputs,
@@ -282,7 +323,9 @@ def embedding_rnn_seq2seq(asr_encoder_inputs,
                           num_encoder_symbols,
                           num_decoder_symbols,
                           embedding_size,
-                          pretrain,
+                          use_asr,
+                          schedule_sampling,
+                          global_step,
                           output_projection=None,
                           feed_previous=False,
                           dtype=None,
@@ -356,7 +399,9 @@ def embedding_rnn_seq2seq(asr_encoder_inputs,
           cell,
           num_decoder_symbols,
           embedding_size,
-          pretrain=pretrain,
+          use_asr=use_asr,
+          schedule_sampling=schedule_sampling,
+          global_step=global_step,
           output_projection=output_projection,
           feed_previous=feed_previous)
 
@@ -372,7 +417,9 @@ def embedding_rnn_seq2seq(asr_encoder_inputs,
             cell,
             num_decoder_symbols,
             embedding_size,
-            pretrain=pretrain,
+            use_asr=use_asr,
+            schedule_sampling=schedule_sampling,
+            global_step=global_step,
             output_projection=output_projection,
             feed_previous=feed_previous_bool,
             update_embedding_for_previous=False)

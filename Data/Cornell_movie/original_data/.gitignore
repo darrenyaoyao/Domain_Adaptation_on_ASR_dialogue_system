@@ -3,3 +3,4 @@ corpus_seq2seq/
 normal_form_for_seq2seq/
 normal_form_for_seq2seq_utf8/
 original_corpus/
+Cornell_data_without_asr/

@@ -1,3 +1,8 @@
+wget -c 'https://www.dropbox.com/s/4wk37bg6rol6jq8/Cornell_data_without_asr.zip?dl=0' -O Cornell_data_without_asr.zip
+unzip Cornell_data_without_asr.zip
+rm Cornell_data_without_asr.zip
+
+"""
 wget -c 'https://www.dropbox.com/s/tbp1m7uwyuloiyn/corpus_lstm.zip?dl=0' -O corpus_lstm.zip
 unzip corpus_lstm.zip
 rm corpus_lstm.zip
@@ -17,3 +22,4 @@ rm original_corpus.zip
 wget -c 'https://www.dropbox.com/s/cwfrs2soorw5vj7/normal_form_for_seq2seq_utf8.zip?dl=0' -O normal_form_for_seq2seq_utf8.zip
 unzip normal_form_for_seq2seq_utf8.zip
 rm normal_form_for_seq2seq_utf8.zip
+"""

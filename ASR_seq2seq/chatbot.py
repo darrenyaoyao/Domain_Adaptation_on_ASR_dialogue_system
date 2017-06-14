@@ -55,6 +55,8 @@ tf.app.flags.DEFINE_boolean("schedule_sampling", False,
                             "Set to True for schedule sampling.")
 tf.app.flags.DEFINE_boolean("test", False,
                             "Set to True for testing.")
+tf.app.flags.DEFINE_boolean("predict", False,
+                            "Set to True for predicting result of testing data")
 tf.app.flags.DEFINE_boolean("self_test", False,
                             "Run a self-test if this is set to True.")
 tf.app.flags.DEFINE_boolean("use_fp16", False,
@@ -289,6 +291,50 @@ def test():
     print(" test: perplexity %.2f MSE %.2f" % (ppx, cvl))
     sys.stdout.flush()
 
+def predict():
+  data = data_utils.prepare_data(
+      FLAGS.data_dir,
+      FLAGS.from_train_data,
+      FLAGS.from_asr_train_data,
+      FLAGS.to_train_data,
+      FLAGS.from_dev_data,
+      FLAGS.from_asr_dev_data,
+      FLAGS.to_dev_data,
+      FLAGS.from_vocab_size,
+      FLAGS.to_vocab_size)
+  from_dev = data[3]
+  from_asr_dev = data[4]
+  to_dev = data[5]
+
+  with tf.Session() as sess:
+    # Create model.
+    print("Creating %d layers of %d units." % (FLAGS.num_layers, FLAGS.size))
+    model = create_model(sess, forward_only=True, attention=FLAGS.attention,
+                         pretrain=FLAGS.pretrain, use_asr=FLAGS.use_asr)
+
+    # Read data into buckets and compute their sizes.
+    print ("Reading development and training data (limit: %d)."
+           % FLAGS.max_train_data_size)
+    dev_set, asr_dev_set = read_data(from_dev, from_asr_dev, to_dev)
+
+    for bucket_id in range(len(_buckets)):
+      if len(dev_set[bucket_id]) == 0:
+        print("  eval: empty bucket %d" % (bucket_id))
+        continue
+      asr_encoder_inputs, encoder_inputs, decoder_inputs, target_weights = model.get_all(
+            dev_set, asr_dev_set, bucket_id)
+      model.batch_size = np.array(asr_encoder_inputs).shape[1]
+      _, _, _, output_logits = model.step(sess, asr_encoder_inputs, encoder_inputs,
+                                               decoder_inputs, target_weights, bucket_id,
+                                               forward_only=True)
+      # This is a greedy decoder - outputs are just argmaxes of output_logits.
+      outputs = [np.argmax(logit, axis=1) for logit in output_logits]
+      # If there is an EOS symbol in outputs, cut them at that point.
+      for i in range(len(outputs)):
+        if data_utils.EOS_ID in outputs[i]:
+          outputs[i] = outputs[i][:outputs[i].index(data_utils.EOS_ID)]
+          print(" ".join([tf.compat.as_str(rev_fr_vocab[output]) for output in outputs]))
+
 def decode():
   with tf.Session() as sess:
     # Create model and load parameters.
@@ -326,6 +372,7 @@ def decode():
       # Get output logits for the sentence.
       _, _, _, output_logits = model.step(sess, asr_encoder_inputs, encoder_inputs,
                                           decoder_inputs, target_weights, bucket_id, True)
+      rint(output_logits[0].shape)
       # This is a greedy decoder - outputs are just argmaxes of output_logits.
       outputs = [int(np.argmax(logit, axis=1)) for logit in output_logits]
       # If there is an EOS symbol in outputs, cut them at that point.
@@ -361,6 +408,8 @@ def main(_):
     self_test()
   elif FLAGS.test:
     test()
+  elif FLAGS.predict:
+    predict()
   elif FLAGS.decode:
     decode()
   else:

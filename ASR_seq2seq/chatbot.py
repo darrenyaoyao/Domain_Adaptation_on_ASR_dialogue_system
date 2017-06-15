@@ -29,12 +29,12 @@ tf.app.flags.DEFINE_integer("from_vocab_size", 40000, "English vocabulary size."
 tf.app.flags.DEFINE_integer("to_vocab_size", 40000, "French vocabulary size.")
 tf.app.flags.DEFINE_string("data_dir", "./data", "Data directory")
 tf.app.flags.DEFINE_string("train_dir", "./model", "Training directory.")
-tf.app.flags.DEFINE_string("from_asr_train_data", "./data/train_asr.enc", "ASR training data.")
-tf.app.flags.DEFINE_string("from_train_data", "./data/train.enc", "Training data.")
-tf.app.flags.DEFINE_string("to_train_data", "./data/train.dec", "Training data.")
-tf.app.flags.DEFINE_string("from_asr_dev_data", "./data/test_asr.enc", "ASR testing data.")
-tf.app.flags.DEFINE_string("from_dev_data", "./data/test.enc", "Testing data.")
-tf.app.flags.DEFINE_string("to_dev_data", "./data/test.dec", "Testing data.")
+tf.app.flags.DEFINE_string("from_asr_train_data", "./data/train_cornell_asr.enc", "ASR training data.")
+tf.app.flags.DEFINE_string("from_train_data", "./data/train_cornell.enc", "Training data.")
+tf.app.flags.DEFINE_string("to_train_data", "./data/train_cornell.dec", "Training data.")
+tf.app.flags.DEFINE_string("from_asr_dev_data", "./data/test_cornell_asr.enc", "ASR testing data.")
+tf.app.flags.DEFINE_string("from_dev_data", "./data/test_cornell.enc", "Testing data.")
+tf.app.flags.DEFINE_string("to_dev_data", "./data/test_cornell.dec", "Testing data.")
 tf.app.flags.DEFINE_integer("max_train_data_size", 0,
                             "Limit on the size of training data (0: no limit).")
 tf.app.flags.DEFINE_integer("steps_per_checkpoint", 200,
@@ -64,17 +64,7 @@ FLAGS = tf.app.flags.FLAGS
 
 # We use a number of buckets and pad to the closest one for efficiency.
 # See seq2seq_model.Seq2SeqModel for details of how they work.
-_buckets = [(5, 10), (10, 15), (20, 25), (40, 50)]
-
-def read_data(source_path, asr_source_path, target_path, max_size=None):
-  data_set = [[] for _ in _buckets]
-  asr_data_set = [[] for _ in _buckets]
-
-FLAGS = tf.app.flags.FLAGS
-
-# We use a number of buckets and pad to the closest one for efficiency.
-# See seq2seq_model.Seq2SeqModel for details of how they work.
-_buckets = [(5, 10), (10, 15), (20, 25), (40, 50)]
+_buckets = [(8, 12), (12, 15), (15, 20), (40, 50)]
 
 def read_data(source_path, asr_source_path, target_path, max_size=None):
   data_set = [[] for _ in _buckets]
@@ -108,6 +98,22 @@ def read_data(source_path, asr_source_path, target_path, max_size=None):
           target = target_file.readline()
   return data_set, asr_data_set
 
+def copy_encoder_parameters(sess):
+  encoder_name = 'embedding_rnn_seq2seq/original_encoder'
+  asr_encoder_name = 'embedding_rnn_seq2seq/asr_encoder'
+  params = [v for v in tf.trainable_variables() if v.name.startswith(encoder_name)]
+  params = sorted(params, key=lambda v: v.name)
+  asr_params = [v for v in tf.trainable_variables() if v.name.startswith(asr_encoder_name)]
+  asr_params = sorted(asr_params, key=lambda v: v.name)
+
+  update_ops = []
+  for v, asr_v in zip(params, asr_params):
+    op = asr_v.assign(v)
+    update_ops.append(op)
+
+  sess.run(update_ops)
+
+
 def create_model(session, forward_only, attention=False, pretrain=False,
                  train_encoder=False, fine_tune=False,
                  use_asr=False, schedule_sampling=False):
@@ -138,6 +144,8 @@ def create_model(session, forward_only, attention=False, pretrain=False,
   else:
     print("Created model with fresh parameters.")
     session.run(tf.global_variables_initializer())
+  if train_encoder:
+    copy_encoder_parameters(session)
   summary_writer = tf.summary.FileWriter("./log/",graph=session.graph)
   return model
 
@@ -190,6 +198,7 @@ def train():
     step_time, loss, cvl = 0.0, 0.0, 0.0
     current_step = 0
     previous_losses = []
+    previous_cvl = []
     while True:
       # Choose a bucket according to data distribution. We pick a random number
       # in [0, 1] and use the corresponding interval in train_buckets_scale.
@@ -219,8 +228,13 @@ def train():
                "%.2f MSE %.2f" % (model.global_step.eval(), model.learning_rate.eval(),
                                   step_time, perplexity, cvl))
         # Decrease learning rate if no improvement was seen over last 3 times.
-        if len(previous_losses) > 2 and loss > max(previous_losses[-3:]):
-          sess.run(model.learning_rate_decay_op)
+        if FLAGS.train_encoder:
+          if len(previous_cvl) > 2 and cvl > max(previous_cvl[-3:]):
+            sess.run(model.learning_rate_decay_op)
+        else:
+          if len(previous_losses) > 2 and loss > max(previous_losses[-3:]):
+            sess.run(model.learning_rate_decay_op)
+        previous_cvl.append(cvl)
         previous_losses.append(loss)
         # Save checkpoint and zero timer and loss.
         checkpoint_path = os.path.join(FLAGS.train_dir, "chatbot.ckpt")

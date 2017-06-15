@@ -170,12 +170,14 @@ class Seq2SeqModel(object):
       # Gradients and SGD update operation for training the model.
       asr_encoder_name = 'embedding_rnn_seq2seq/asr_encoder'
       encoder_name = 'embedding_rnn_seq2seq/original_encoder'
+
       if pretrain:
-        params = [v for v in tf.trainable_variables() if not v.name.startswith(asr_encoder_name)]
+        params = [v for v in tf.trainable_variables()]
       elif train_encoder:
         params = [v for v in tf.trainable_variables() if v.name.startswith(asr_encoder_name)]
       elif fine_tune:
         params = [v for v in tf.trainable_variables() if not v.name.startswith(encoder_name)]
+
       if not forward_only:
         self.gradient_norms = []
         self.gradient_norms_cvl = []

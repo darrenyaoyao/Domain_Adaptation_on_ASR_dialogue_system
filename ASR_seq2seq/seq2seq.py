@@ -105,6 +105,11 @@ def _get_epsilon(i, decay='inverse_sigmoid'):
   if decay == 'inverse_sigmoid':
     k = 1000
     return tf.cast((k / (k + tf.exp(i / k))), dtype=tf.float32)
+  elif decay == 'linear':
+    k = 0.25
+    c = 1/40000
+    e = 0.0
+    return tf.cast(tf.maximum(e, k-c*tf.cast(i, dtype=tf.float32)), dtype=tf.float32)
 
 
 def rnn_decoder(decoder_inputs,

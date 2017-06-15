@@ -80,7 +80,6 @@ class Seq2SeqModel(object):
         cell = tf.contrib.rnn.MultiRNNCell([single_cell() for _ in range(num_layers)])
 
       # The seq2seq function: we use embedding for the input and attention.
-      # seq2seq function多了一個asr_encoder_inputs
       def seq2seq_f(asr_encoder_inputs, encoder_inputs, decoder_inputs,
                     do_decode, use_asr, schedule_sampling):
         if attention:
@@ -114,7 +113,6 @@ class Seq2SeqModel(object):
             dtype=dtype)
 
       # Feeds for inputs.
-      # 幫asr_encoder_inputs建placeholder
       self.asr_encoder_inputs = []
       self.encoder_inputs = []
       self.decoder_inputs = []
@@ -146,8 +144,6 @@ class Seq2SeqModel(object):
 
       # Training outputs and losses.
       if forward_only:
-        # model_with_buckets input多了self.asr_encoder_inputs，output則是self.context_vector_losses
-        # seq2seq_f多了一個input
         self.outputs, self.losses, self.context_vector_losses = seq2seq.model_with_buckets(
             self.asr_encoder_inputs, self.encoder_inputs, self.decoder_inputs,
             targets, self.target_weights, buckets,
@@ -185,7 +181,6 @@ class Seq2SeqModel(object):
         self.updates_cvl = []
         opt = tf.train.GradientDescentOptimizer(self.learning_rate)
         for b in range(len(buckets)):
-          # 分別對self.losses跟self.context_vector_losses作gradient
           gradients = tf.gradients(self.losses[b], params)
           gradients_cvl = tf.gradients(self.context_vector_losses[b], params)
           clipped_gradients, norm = tf.clip_by_global_norm(gradients, max_gradient_norm)
@@ -271,9 +266,6 @@ class Seq2SeqModel(object):
     # Get a random batch of encoder and decoder inputs from data,
     # pad them if needed, reverse encoder inputs and add GO to decoder.
     for _ in range(self.batch_size):
-      #這裡是先從0~len(data[bucket_id])中隨機選出一個index
-      #然後根據這個index找出一筆original的encoder_input，decoder_input，以及對應的asr_encoder_input
-      #後面asr_encoder_input的pad跟reindex都跟原來一樣
       idx = random.randrange(len(data[bucket_id]))
       encoder_input, decoder_input = data[bucket_id][idx]
       asr_encoder_input = asr_data[bucket_id][idx][0]

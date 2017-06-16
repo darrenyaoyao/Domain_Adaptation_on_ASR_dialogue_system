@@ -1,0 +1,4 @@
+*.zip
+ori_data/
+punct_split/
+punct_not_split/

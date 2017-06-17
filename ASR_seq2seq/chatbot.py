@@ -25,16 +25,17 @@ tf.app.flags.DEFINE_integer("batch_size", 64,
                             "Batch size to use during training.")
 tf.app.flags.DEFINE_integer("size", 512, "Size of each model layer.")
 tf.app.flags.DEFINE_integer("num_layers", 1, "Number of layers in the model.")
-tf.app.flags.DEFINE_integer("from_vocab_size", 40000, "English vocabulary size.")
-tf.app.flags.DEFINE_integer("to_vocab_size", 40000, "French vocabulary size.")
+tf.app.flags.DEFINE_integer("from_vocab_size", 20000, "English vocabulary size.")
+tf.app.flags.DEFINE_integer("to_vocab_size", 20000, "French vocabulary size.")
 tf.app.flags.DEFINE_string("data_dir", "./data", "Data directory")
 tf.app.flags.DEFINE_string("train_dir", "./model", "Training directory.")
-tf.app.flags.DEFINE_string("from_asr_train_data", "./data/train_cornell_asr.enc", "ASR training data.")
-tf.app.flags.DEFINE_string("from_train_data", "./data/train_cornell.enc", "Training data.")
-tf.app.flags.DEFINE_string("to_train_data", "./data/train_cornell.dec", "Training data.")
-tf.app.flags.DEFINE_string("from_asr_dev_data", "./data/test_cornell_asr.enc", "ASR testing data.")
-tf.app.flags.DEFINE_string("from_dev_data", "./data/test_cornell.enc", "Testing data.")
-tf.app.flags.DEFINE_string("to_dev_data", "./data/test_cornell.dec", "Testing data.")
+tf.app.flags.DEFINE_string("from_asr_train_data", "./data/train_asr.enc", "ASR training data.")
+tf.app.flags.DEFINE_string("from_train_data", "./data/train_new.enc", "Training data.")
+tf.app.flags.DEFINE_string("to_train_data", "./data/train_new.dec", "Training data.")
+tf.app.flags.DEFINE_string("from_asr_dev_data", "./data/test_asr.enc", "ASR testing data.")
+tf.app.flags.DEFINE_string("from_dev_data", "./data/test_new.enc", "Testing data.")
+tf.app.flags.DEFINE_string("to_dev_data", "./data/test_new.dec", "Testing data.")
+tf.app.flags.DEFINE_string("predict_file", "./predict", "Predicting file.")
 tf.app.flags.DEFINE_integer("max_train_data_size", 0,
                             "Limit on the size of training data (0: no limit).")
 tf.app.flags.DEFINE_integer("steps_per_checkpoint", 200,
@@ -319,6 +320,10 @@ def predict():
   from_dev = data[3]
   from_asr_dev = data[4]
   to_dev = data[5]
+  fr_vocab_path = os.path.join(FLAGS.data_dir,
+                                 "vocab%d.to" % FLAGS.to_vocab_size)
+  _, rev_fr_vocab = data_utils.initialize_vocabulary(fr_vocab_path)
+  f  = open('predict', 'w')
 
   with tf.Session() as sess:
     # Create model.
@@ -346,8 +351,11 @@ def predict():
       # If there is an EOS symbol in outputs, cut them at that point.
       for i in range(len(outputs)):
         if data_utils.EOS_ID in outputs[i]:
+          outputs[i] = [int(output) for output in outputs[i]]
           outputs[i] = outputs[i][:outputs[i].index(data_utils.EOS_ID)]
-          print(" ".join([tf.compat.as_str(rev_fr_vocab[output]) for output in outputs]))
+        s = " ".join([tf.compat.as_str(rev_fr_vocab[int(output)]) for output in outputs[i]])
+        print(s)
+        f.write(s+"\n")
 
 def decode():
   with tf.Session() as sess:

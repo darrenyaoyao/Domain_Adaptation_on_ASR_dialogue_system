@@ -939,7 +939,7 @@ def context_vector_loss(asr_encoder_state,
     # 根據loss算出一整個batch的MSE，如果average_across_batch=True就除掉取平均
     cost = loss(asr_encoder_state, encoder_state)
     if average_across_batch:
-      batch_size = array_ops.shape(encoder_state[0])[0]
+      batch_size = array_ops.shape(encoder_state)[0]
       return cost / math_ops.cast(batch_size, cost.dtype)
     else:
       return cost

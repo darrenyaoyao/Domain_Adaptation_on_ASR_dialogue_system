@@ -25,17 +25,10 @@ tf.app.flags.DEFINE_integer("batch_size", 64,
                             "Batch size to use during training.")
 tf.app.flags.DEFINE_integer("size", 512, "Size of each model layer.")
 tf.app.flags.DEFINE_integer("num_layers", 1, "Number of layers in the model.")
-tf.app.flags.DEFINE_integer("from_vocab_size", 20000, "English vocabulary size.")
-tf.app.flags.DEFINE_integer("to_vocab_size", 20000, "French vocabulary size.")
+tf.app.flags.DEFINE_integer("from_vocab_size", 40000, "English vocabulary size.")
+tf.app.flags.DEFINE_integer("to_vocab_size", 40000, "French vocabulary size.")
 tf.app.flags.DEFINE_string("data_dir", "./data", "Data directory")
 tf.app.flags.DEFINE_string("train_dir", "./model", "Training directory.")
-tf.app.flags.DEFINE_string("from_asr_train_data", "./data/train_asr.enc", "ASR training data.")
-tf.app.flags.DEFINE_string("from_train_data", "./data/train_new.enc", "Training data.")
-tf.app.flags.DEFINE_string("to_train_data", "./data/train_new.dec", "Training data.")
-tf.app.flags.DEFINE_string("from_asr_dev_data", "./data/test_asr.enc", "ASR testing data.")
-tf.app.flags.DEFINE_string("from_dev_data", "./data/test_new.enc", "Testing data.")
-tf.app.flags.DEFINE_string("to_dev_data", "./data/test_new.dec", "Testing data.")
-tf.app.flags.DEFINE_string("predict_file", "./predict", "Predicting file.")
 tf.app.flags.DEFINE_integer("max_train_data_size", 0,
                             "Limit on the size of training data (0: no limit).")
 tf.app.flags.DEFINE_integer("steps_per_checkpoint", 200,
@@ -65,9 +58,16 @@ tf.app.flags.DEFINE_boolean("use_fp16", False,
 
 FLAGS = tf.app.flags.FLAGS
 
+from_asr_train_data = os.path.join(FLAGS.data_dir, 'train_asr.enc')
+from_train_data = os.path.join(FLAGS.data_dir, 'train.enc')
+to_train_data = os.path.join(FLAGS.data_dir, 'train.dec')
+from_asr_dev_data = os.path.join(FLAGS.data_dir, 'test_asr.enc')
+from_dev_data = os.path.join(FLAGS.data_dir, 'test.enc')
+to_dev_data = os.path.join(FLAGS.data_dir, 'test.dec')
+
 # We use a number of buckets and pad to the closest one for efficiency.
 # See seq2seq_model.Seq2SeqModel for details of how they work.
-_buckets = [(8, 12), (12, 15), (15, 20), (40, 50)]
+_buckets = [(8, 12), (12, 18), (20, 25), (40, 50)]
 
 def read_data(source_path, asr_source_path, target_path, max_size=None):
   data_set = [[] for _ in _buckets]
@@ -155,12 +155,12 @@ def create_model(session, forward_only, attention=False, pretrain=False,
 def train():
   data = data_utils.prepare_data(
       FLAGS.data_dir,
-      FLAGS.from_train_data,
-      FLAGS.from_asr_train_data,
-      FLAGS.to_train_data,
-      FLAGS.from_dev_data,
-      FLAGS.from_asr_dev_data,
-      FLAGS.to_dev_data,
+      from_train_data,
+      from_asr_train_data,
+      to_train_data,
+      from_dev_data,
+      from_asr_dev_data,
+      to_dev_data,
       FLAGS.from_vocab_size,
       FLAGS.to_vocab_size)
   from_train = data[0]
@@ -260,12 +260,12 @@ def train():
 def test():
   data = data_utils.prepare_data(
       FLAGS.data_dir,
-      FLAGS.from_train_data,
-      FLAGS.from_asr_train_data,
-      FLAGS.to_train_data,
-      FLAGS.from_dev_data,
-      FLAGS.from_asr_dev_data,
-      FLAGS.to_dev_data,
+      from_train_data,
+      from_asr_train_data,
+      to_train_data,
+      from_dev_data,
+      from_asr_dev_data,
+      to_dev_data,
       FLAGS.from_vocab_size,
       FLAGS.to_vocab_size)
   from_dev = data[3]
@@ -309,12 +309,12 @@ def test():
 def predict():
   data = data_utils.prepare_data(
       FLAGS.data_dir,
-      FLAGS.from_train_data,
-      FLAGS.from_asr_train_data,
-      FLAGS.to_train_data,
-      FLAGS.from_dev_data,
-      FLAGS.from_asr_dev_data,
-      FLAGS.to_dev_data,
+      from_train_data,
+      from_asr_train_data,
+      to_train_data,
+      from_dev_data,
+      from_asr_dev_data,
+      to_dev_data,
       FLAGS.from_vocab_size,
       FLAGS.to_vocab_size)
   from_dev = data[3]
@@ -394,7 +394,6 @@ def decode():
       # Get output logits for the sentence.
       _, _, _, output_logits = model.step(sess, asr_encoder_inputs, encoder_inputs,
                                           decoder_inputs, target_weights, bucket_id, True)
-      rint(output_logits[0].shape)
       # This is a greedy decoder - outputs are just argmaxes of output_logits.
       outputs = [int(np.argmax(logit, axis=1)) for logit in output_logits]
       # If there is an EOS symbol in outputs, cut them at that point.

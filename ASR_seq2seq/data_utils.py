@@ -119,8 +119,11 @@ def prepare_data(data_dir, from_train_path, from_asr_train_path, to_train_path,
   data_to_token_ids(from_train_path, from_train_ids_path, from_vocab_path, tokenizer)
 
   # Create token ids for the asr_training data.
-  from_asr_train_ids_path = from_asr_train_path + (".ids%d" % from_vocabulary_size)
-  data_to_token_ids(from_asr_train_path, from_asr_train_ids_path, from_vocab_path, tokenizer)
+  if gfile.Exists(from_asr_train_path):
+    from_asr_train_ids_path = from_asr_train_path + (".ids%d" % from_vocabulary_size)
+    data_to_token_ids(from_asr_train_path, from_asr_train_ids_path, from_vocab_path, tokenizer)
+  else:
+    from_asr_train_ids_path = from_train_ids_path
 
   # Create token ids for the development data.
   to_dev_ids_path = to_dev_path + (".ids%d" % to_vocabulary_size)
@@ -129,8 +132,11 @@ def prepare_data(data_dir, from_train_path, from_asr_train_path, to_train_path,
   data_to_token_ids(from_dev_path, from_dev_ids_path, from_vocab_path, tokenizer)
 
   # Create token ids for the asr_development data.
-  from_asr_dev_ids_path = from_asr_dev_path + (".ids%d" % from_vocabulary_size)
-  data_to_token_ids(from_asr_dev_path, from_asr_dev_ids_path, from_vocab_path, tokenizer)
+  if gfile.Exists(from_asr_dev_path):
+    from_asr_dev_ids_path = from_asr_dev_path + (".ids%d" % from_vocabulary_size)
+    data_to_token_ids(from_asr_dev_path, from_asr_dev_ids_path, from_vocab_path, tokenizer)
+  else:
+    from_asr_dev_ids_path = from_dev_ids_path
 
   return (from_train_ids_path, from_asr_train_ids_path, to_train_ids_path,
           from_dev_ids_path, from_asr_dev_ids_path, to_dev_ids_path,

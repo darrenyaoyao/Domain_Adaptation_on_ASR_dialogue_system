@@ -135,8 +135,6 @@ class Seq2SeqModel(object):
                 for i in range(len(self.decoder_inputs) - 1)]
 
       # Set use_asr to false when pretraining
-      if pretrain:
-        use_asr = False
       if train_encoder:
         use_asr = True
       if fine_tune:

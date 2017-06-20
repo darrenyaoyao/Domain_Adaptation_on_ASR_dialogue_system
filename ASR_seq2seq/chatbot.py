@@ -29,10 +29,14 @@ tf.app.flags.DEFINE_integer("from_vocab_size", 40000, "English vocabulary size."
 tf.app.flags.DEFINE_integer("to_vocab_size", 40000, "French vocabulary size.")
 tf.app.flags.DEFINE_string("data_dir", "./data", "Data directory")
 tf.app.flags.DEFINE_string("train_dir", "./model", "Training directory.")
+tf.app.flags.DEFINE_string("predict_file", "predict", "Predict file.")
 tf.app.flags.DEFINE_integer("max_train_data_size", 0,
                             "Limit on the size of training data (0: no limit).")
 tf.app.flags.DEFINE_integer("steps_per_checkpoint", 200,
                             "How many training steps to do per checkpoint.")
+tf.app.flags.DEFINE_float("percentage", 100,
+                          "How much percentage ASR data \
+                           used in training process.")
 tf.app.flags.DEFINE_boolean("decode", False,
                             "Set to True for interactive decoding.")
 tf.app.flags.DEFINE_boolean("attention", False,
@@ -188,6 +192,11 @@ def train():
     train_set, asr_train_set = read_data(from_train, from_asr_train, to_train,
                                          FLAGS.max_train_data_size)
 
+    percentage = FLAGS.percentage / 100.0
+    train_set = [train_set[b][:int(len(train_set[b])*percentage)]
+                 for b in range(len(_buckets))]
+    asr_train_set = [asr_train_set[b][:int(len(asr_train_set[b])*percentage)]
+                     for b in range(len(_buckets))]
     train_bucket_sizes = [len(train_set[b]) for b in range(len(_buckets))]
     train_total_size = float(sum(train_bucket_sizes))
 
@@ -323,7 +332,7 @@ def predict():
   fr_vocab_path = os.path.join(FLAGS.data_dir,
                                  "vocab%d.to" % FLAGS.to_vocab_size)
   _, rev_fr_vocab = data_utils.initialize_vocabulary(fr_vocab_path)
-  f  = open('predict', 'w')
+  f  = open(FLAGS.predict_file, 'w')
 
   with tf.Session() as sess:
     # Create model.
@@ -342,20 +351,41 @@ def predict():
         continue
       asr_encoder_inputs, encoder_inputs, decoder_inputs, target_weights = model.get_all(
             dev_set, asr_dev_set, bucket_id)
-      model.batch_size = np.array(asr_encoder_inputs).shape[1]
-      _, _, _, output_logits = model.step(sess, asr_encoder_inputs, encoder_inputs,
-                                               decoder_inputs, target_weights, bucket_id,
-                                               forward_only=True)
-      # This is a greedy decoder - outputs are just argmaxes of output_logits.
-      outputs = [np.argmax(logit, axis=1) for logit in output_logits]
-      # If there is an EOS symbol in outputs, cut them at that point.
-      for i in range(len(outputs)):
-        if data_utils.EOS_ID in outputs[i]:
-          outputs[i] = [int(output) for output in outputs[i]]
-          outputs[i] = outputs[i][:outputs[i].index(data_utils.EOS_ID)]
-        s = " ".join([tf.compat.as_str(rev_fr_vocab[int(output)]) for output in outputs[i]])
-        print(s)
-        f.write(s+"\n")
+      total_size = np.array(asr_encoder_inputs).shape[1]
+      iteration = int(total_size/100) + 1
+      print(iteration)
+      last_size = total_size % 100
+      for i in range(iteration):
+        if i < iteration - 1:
+          asr_encoder_inputs_batch = [asr_encoder_inputs[j][i*100:(i+1)*100] for j in range(len(asr_encoder_inputs))]
+          encoder_inputs_batch = [encoder_inputs[j][i*100:(i+1)*100] for j in range(len(encoder_inputs))]
+          decoder_inputs_batch = [decoder_inputs[j][i*100:(i+1)*100] for j in range(len(decoder_inputs))]
+          target_weights_batch = [target_weights[j][i*100:(i+1)*100] for j in range(len(target_weights))]
+          model.batch_size = 100
+        else:
+          asr_encoder_inputs_batch = [asr_encoder_inputs[j][i*100:] for j in range(len(asr_encoder_inputs))]
+          encoder_inputs_batch = [encoder_inputs[j][i*100:] for j in range(len(encoder_inputs))]
+          decoder_inputs_batch = [decoder_inputs[j][i*100:] for j in range(len(decoder_inputs))]
+          target_weights_batch = [target_weights[j][i*100:] for j in range(len(target_weights))]
+          model.batch_size = last_size
+        _, _, _, output_logits = model.step(sess, asr_encoder_inputs_batch, encoder_inputs_batch,
+                                                decoder_inputs_batch, target_weights_batch, bucket_id,
+                                                forward_only=True)
+        # This is a greedy decoder - outputs are just argmaxes of output_logits.
+        outputs = [np.argmax(logit, axis=1) for logit in output_logits]
+        # If there is an EOS symbol in outputs, cut them at that point.
+        outputs = list(np.transpose(outputs, [1, 0]))
+        for i in range(len(outputs)):
+          if data_utils.EOS_ID in outputs[i]:
+            outputs[i] = [int(output) for output in outputs[i]]
+            outputs[i] = outputs[i][:list(outputs[i]).index(data_utils.EOS_ID)]
+          print(len(rev_fr_vocab))
+          for output in outputs[i]:
+            print(output)
+            print(tf.compat.as_str(rev_fr_vocab[int(output)]))
+          s = " ".join([tf.compat.as_str(rev_fr_vocab[int(output)]) for output in outputs[i]])
+          print(s)
+          f.write(s+"\n")
 
 def decode():
   with tf.Session() as sess:

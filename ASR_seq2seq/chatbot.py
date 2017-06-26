@@ -337,6 +337,7 @@ def predict():
                                  "vocab%d.to" % FLAGS.to_vocab_size)
   _, rev_fr_vocab = data_utils.initialize_vocabulary(fr_vocab_path)
   f  = open(FLAGS.predict_file, 'w')
+  f_lines = open(FLAGS.predict_lines, 'w')
 
   with tf.Session() as sess:
     # Create model.

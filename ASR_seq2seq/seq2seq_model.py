@@ -50,7 +50,7 @@ class Seq2SeqModel(object):
     if num_samples > 0 and num_samples < self.target_vocab_size:
       w_t = tf.get_variable("proj_w", [self.target_vocab_size, size], dtype=dtype)
       w = tf.transpose(w_t)
-      b = tf.get_variable("proj_b", [self.target_vocab_size,],dtype=dtype)
+      b = tf.get_variable("proj_b", [self.target_vocab_size,], dtype=dtype)
       output_projection = (w, b)
 
       def sampled_loss(labels, logits):
@@ -91,7 +91,7 @@ class Seq2SeqModel(object):
             cell,
             num_encoder_symbols=source_vocab_size,
             num_decoder_symbols=target_vocab_size,
-            embedding_size=size,
+            embedding_size=64,
             output_projection=output_projection,
             feed_previous=do_decode,
             dtype=dtype)
@@ -104,7 +104,7 @@ class Seq2SeqModel(object):
             cell,
             num_encoder_symbols=source_vocab_size,
             num_decoder_symbols=target_vocab_size,
-            embedding_size=size,
+            embedding_size=64,
             use_asr=use_asr,
             schedule_sampling=schedule_sampling,
             global_step=self.global_step,
@@ -177,7 +177,13 @@ class Seq2SeqModel(object):
         self.gradient_norms_cvl = []
         self.updates = []
         self.updates_cvl = []
-        opt = tf.train.GradientDescentOptimizer(self.learning_rate)
+        opt = tf.train.AdamOptimizer(
+            learning_rate=0.002,
+            beta1=0.9,
+            beta2=0.999,
+            epsilon=1e-08
+        )
+        # opt = tf.train.GradientDescentOptimizer(self.learning_rate)
         for b in range(len(buckets)):
           gradients = tf.gradients(self.losses[b], params)
           gradients_cvl = tf.gradients(self.context_vector_losses[b], params)

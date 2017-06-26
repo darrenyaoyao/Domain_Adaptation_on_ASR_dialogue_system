@@ -24,9 +24,9 @@ tf.app.flags.DEFINE_float("max_gradient_norm", 5.0,
 tf.app.flags.DEFINE_integer("batch_size", 64,
                             "Batch size to use during training.")
 tf.app.flags.DEFINE_integer("size", 512, "Size of each model layer.")
-tf.app.flags.DEFINE_integer("num_layers", 1, "Number of layers in the model.")
-tf.app.flags.DEFINE_integer("from_vocab_size", 40000, "English vocabulary size.")
-tf.app.flags.DEFINE_integer("to_vocab_size", 40000, "French vocabulary size.")
+tf.app.flags.DEFINE_integer("num_layers", 2, "Number of layers in the model.")
+tf.app.flags.DEFINE_integer("from_vocab_size", 35000, "English vocabulary size.")
+tf.app.flags.DEFINE_integer("to_vocab_size", 35000, "French vocabulary size.")
 tf.app.flags.DEFINE_string("data_dir", "./data", "Data directory")
 tf.app.flags.DEFINE_string("train_dir", "./model", "Training directory.")
 tf.app.flags.DEFINE_string("predict_file", "predict", "Predict file.")
@@ -71,7 +71,8 @@ to_dev_data = os.path.join(FLAGS.data_dir, 'test.dec')
 
 # We use a number of buckets and pad to the closest one for efficiency.
 # See seq2seq_model.Seq2SeqModel for details of how they work.
-_buckets = [(8, 12), (12, 18), (20, 25), (40, 50)]
+# _buckets = [(8, 12), (12, 18), (20, 25), (40, 50)]
+_buckets = [(10, 10), (20, 20)]
 
 def read_data(source_path, asr_source_path, target_path, max_size=None):
   data_set = [[] for _ in _buckets]
@@ -353,7 +354,7 @@ def predict():
             dev_set, asr_dev_set, bucket_id)
       total_size = np.array(asr_encoder_inputs).shape[1]
       iteration = int(total_size/100) + 1
-      print(iteration)
+      # print(iteration)
       last_size = total_size % 100
       for i in range(iteration):
         if i < iteration - 1:
@@ -379,12 +380,12 @@ def predict():
           if data_utils.EOS_ID in outputs[i]:
             outputs[i] = [int(output) for output in outputs[i]]
             outputs[i] = outputs[i][:list(outputs[i]).index(data_utils.EOS_ID)]
-          print(len(rev_fr_vocab))
-          for output in outputs[i]:
-            print(output)
-            print(tf.compat.as_str(rev_fr_vocab[int(output)]))
+          # print(len(rev_fr_vocab))
+          # for output in outputs[i]:
+            # print(output)
+            # print(tf.compat.as_str(rev_fr_vocab[int(output)]))
           s = " ".join([tf.compat.as_str(rev_fr_vocab[int(output)]) for output in outputs[i]])
-          print(s)
+          # print(s)
           f.write(s+"\n")
 
 def decode():

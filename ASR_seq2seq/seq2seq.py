@@ -927,8 +927,12 @@ def loss(asr_encoder_state,
          name=None):
   with ops.name_scope(name, "loss", [asr_encoder_state, encoder_state]):
     if loss_type == "MSE":
-      loss = math_ops.reduce_sum(math_ops.pow(asr_encoder_state-encoder_state, 2))
-    return loss
+      losses = []
+      for i in range(len(encoder_state)):
+        losses.append(tf.squared_difference(asr_encoder_state[i], encoder_state[i]))
+      losses = tf.concat(losses, 1)
+      cost = tf.reduce_mean(losses)
+    return cost
 
 
 def context_vector_loss(asr_encoder_state,
@@ -938,11 +942,7 @@ def context_vector_loss(asr_encoder_state,
   with ops.name_scope(name, "context_vector_loss", [asr_encoder_state, encoder_state]):
     # 根據loss算出一整個batch的MSE，如果average_across_batch=True就除掉取平均
     cost = loss(asr_encoder_state, encoder_state)
-    if average_across_batch:
-      batch_size = array_ops.shape(encoder_state)[0]
-      return cost / math_ops.cast(batch_size, cost.dtype)
-    else:
-      return cost
+    return cost
 
 
 def model_with_buckets(asr_encoder_inputs,

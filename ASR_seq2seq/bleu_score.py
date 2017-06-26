@@ -1,5 +1,8 @@
 import nltk
 import argparse
+from nltk.translate.bleu_score import SmoothingFunction
+
+chencherry = SmoothingFunction()
 
 parser = argparse.ArgumentParser(description=
                                  'Calculate belu score of original \
@@ -23,6 +26,7 @@ BLEUscore = 0
 for i in range(len(original_data)):
     hypothesis = asr_data[i]
     reference = original_data[i]
-    BLEUscore += nltk.translate.bleu_score.sentence_bleu([reference], hypothesis)
+    BLEUscore += nltk.translate.bleu_score.sentence_bleu([reference], hypothesis, \
+                                                         smoothing_function=chencherry.method2)
 
 print(BLEUscore/len(original_data))

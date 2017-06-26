@@ -1,0 +1,6 @@
+data/
+log/
+model/
+__pychache__
+experiment_model/
+

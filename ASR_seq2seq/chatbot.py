@@ -30,6 +30,7 @@ tf.app.flags.DEFINE_integer("to_vocab_size", 35000, "French vocabulary size.")
 tf.app.flags.DEFINE_string("data_dir", "./data", "Data directory")
 tf.app.flags.DEFINE_string("train_dir", "./model", "Training directory.")
 tf.app.flags.DEFINE_string("predict_file", "predict", "Predict file.")
+tf.app.flags.DEFINE_string("predict_lines", "predict_lines", "Discribe the lines used in predict")
 tf.app.flags.DEFINE_integer("max_train_data_size", 0,
                             "Limit on the size of training data (0: no limit).")
 tf.app.flags.DEFINE_integer("steps_per_checkpoint", 200,
@@ -77,6 +78,7 @@ _buckets = [(10, 10), (20, 20)]
 def read_data(source_path, asr_source_path, target_path, max_size=None):
   data_set = [[] for _ in _buckets]
   asr_data_set = [[] for _ in _buckets]
+  data_lines = [[] for _ in _buckets]
   with tf.gfile.GFile(source_path, mode="r") as source_file:
     with tf.gfile.GFile(asr_source_path, mode="r") as asr_source_file:
       with tf.gfile.GFile(target_path, mode="r") as target_file:
@@ -100,11 +102,12 @@ def read_data(source_path, asr_source_path, target_path, max_size=None):
                                              and len(target_ids) < target_size:
               data_set[bucket_id].append([source_ids, target_ids])
               asr_data_set[bucket_id].append([asr_source_ids, target_ids])
+              data_lines[bucket_id].append(counter)
               break
           source = source_file.readline()
           asr_source = asr_source_file.readline()
           target = target_file.readline()
-  return data_set, asr_data_set
+  return data_set, asr_data_set, data_lines
 
 def copy_encoder_parameters(sess):
   encoder_name = 'embedding_rnn_seq2seq/original_encoder'
@@ -189,8 +192,8 @@ def train():
     # Read data into buckets and compute their sizes.
     print ("Reading development and training data (limit: %d)."
            % FLAGS.max_train_data_size)
-    dev_set, asr_dev_set = read_data(from_dev, from_asr_dev, to_dev)
-    train_set, asr_train_set = read_data(from_train, from_asr_train, to_train,
+    dev_set, asr_dev_set, _ = read_data(from_dev, from_asr_dev, to_dev)
+    train_set, asr_train_set, _  = read_data(from_train, from_asr_train, to_train,
                                          FLAGS.max_train_data_size)
 
     percentage = FLAGS.percentage / 100.0
@@ -291,7 +294,7 @@ def test():
     # Read data into buckets and compute their sizes.
     print ("Reading development and training data (limit: %d)."
            % FLAGS.max_train_data_size)
-    dev_set, asr_dev_set = read_data(from_dev, from_asr_dev, to_dev)
+    dev_set, asr_dev_set, _ = read_data(from_dev, from_asr_dev, to_dev)
 
     loss, cvl = 0.0, 0.0
     steps = 100
@@ -344,9 +347,11 @@ def predict():
     # Read data into buckets and compute their sizes.
     print ("Reading development and training data (limit: %d)."
            % FLAGS.max_train_data_size)
-    dev_set, asr_dev_set = read_data(from_dev, from_asr_dev, to_dev)
+    dev_set, asr_dev_set, data_lines = read_data(from_dev, from_asr_dev, to_dev)
 
     for bucket_id in range(len(_buckets)):
+      for line_num in data_lines[bucket_id]:
+        f_lines.write(str(line_num)+'\n')
       if len(dev_set[bucket_id]) == 0:
         print("  eval: empty bucket %d" % (bucket_id))
         continue

@@ -1,8 +1,11 @@
 import nltk
 import argparse
 import re
+from nltk.translate.bleu_score import SmoothingFunction
 
-_WORDS_SPLIT = re.compile("([.,!?\"':;)(])") 
+chencherry = SmoothingFunction()
+
+_WORDS_SPLIT = re.compile("([.,!?\"':;)(])")
 def basic_tokenizer(sentence):
     words = [ ]
     for space_separated_fragment in sentence.strip().split():
@@ -14,31 +17,32 @@ parser = argparse.ArgumentParser(description=
                                   predict data and ASR predict data')
 parser.add_argument('--original', dest='original')
 parser.add_argument('--asr', dest='asr')
-parser.add_argument('--lines', dest="lines")
 
 args = parser.parse_args()
 original = open(args.original)
 asr = open(args.asr)
-f_line = open(args.lines)
-ori_lines = [ ]
-for ori_line in f_line:
-    ori_lines.append(int(ori_line) -1 )
 
 original_data = []
 asr_data = []
-for counter,line in enumerate(original):
-    if counter in ori_lines:
-        tokens = basic_tokenizer(line)
-        temp = " ".join(tokens)
-        original_data.append(temp)
+for line in original:
+    tokens = basic_tokenizer(line)
+    original_data.append(tokens)
 
 for line in asr:
-    asr_data.append(line)
+    tokens = basic_tokenizer(line)
+    if len(tokens) == 0:
+      tokens = ['']
+    asr_data.append(tokens)
+
+# BLEUscore = nltk.translate.bleu_score.corpus_bleu(original_data, asr_data, auto_reweigh=True)
+# print(BLEUscore)
 
 BLEUscore = 0
 for i in range(len(original_data)):
     hypothesis = asr_data[i]
     reference = original_data[i]
-    BLEUscore += nltk.translate.bleu_score.sentence_bleu([reference], hypothesis)
+    BLEUscore += nltk.translate.bleu_score.sentence_bleu([reference], hypothesis,
+                                                         smoothing_function=chencherry.method2,
+                                                         auto_reweigh=True)
 
 print(BLEUscore/len(original_data))

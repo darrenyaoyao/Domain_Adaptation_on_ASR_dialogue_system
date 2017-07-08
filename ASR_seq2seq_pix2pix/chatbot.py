@@ -157,7 +157,7 @@ def create_model(session, forward_only, attention=False, pretrain=False,
   else:
     print("Created model with fresh parameters.")
     session.run(tf.global_variables_initializer())
-  if train_encoder:
+  if train_encoder or pix2pix:
     copy_encoder_parameters(session)
   summary_writer = tf.summary.FileWriter("./log/",graph=session.graph)
   return model

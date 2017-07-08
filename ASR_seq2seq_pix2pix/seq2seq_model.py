@@ -279,6 +279,8 @@ class Seq2SeqModel(object):
     # Run g_optim twice to make sure that d_loss does not go to zero (different from paper)
     _ = session.run([self.updates_g[bucket_id]], input_feed)
 
+    _ = session.run([self.global_step_incre])
+
     errD_fake = self.d_losses_fake[bucket_id].eval(input_feed)
     errD_real = self.d_losses_real[bucket_id].eval(input_feed)
     errG = self.g_losses[bucket_id].eval(input_feed)
